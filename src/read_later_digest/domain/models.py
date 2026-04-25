@@ -55,3 +55,47 @@ class ArticleSummary:
     key_points: list[str]
     type_: ArticleType | None
     priority: Priority | None
+
+
+class ProcessStatus(StrEnum):
+    SUCCESS = "success"
+    FETCH_FAILED = "fetch_failed"
+    LLM_FAILED = "llm_failed"
+
+
+@dataclass(frozen=True)
+class ProcessedArticle:
+    """Per-article processing outcome, paired with summary or failure reason.
+
+    Invariants (trusted, not validated):
+    - status == SUCCESS  => summary is not None, error_reason is None
+    - status != SUCCESS  => summary is None, error_reason is not None
+    """
+
+    article: NotionArticle
+    status: ProcessStatus
+    summary: ArticleSummary | None
+    error_reason: str | None
+
+
+@dataclass(frozen=True)
+class Digest:
+    """Aggregated processing outcome for one batch run.
+
+    Invariants (caller's responsibility — not validated):
+    - every element of `succeeded` has `status == ProcessStatus.SUCCESS`
+      and a non-None `summary`
+    - every element of `failed` has `status != ProcessStatus.SUCCESS`
+      and a non-None `error_reason`
+    """
+
+    target_date: str
+    succeeded: list[ProcessedArticle]
+    failed: list[ProcessedArticle]
+
+
+@dataclass(frozen=True)
+class RenderedDigest:
+    subject: str
+    html: str
+    text: str
