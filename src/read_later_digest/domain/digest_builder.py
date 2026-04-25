@@ -62,9 +62,7 @@ class DigestBuilder:
     @staticmethod
     def _tag_label(summary: ArticleSummary) -> tuple[str, str]:
         type_label = summary.type_.value if summary.type_ is not None else _UNCATEGORIZED_TYPE
-        priority_label = (
-            summary.priority.value if summary.priority is not None else _UNSET_PRIORITY
-        )
+        priority_label = summary.priority.value if summary.priority is not None else _UNSET_PRIORITY
         return type_label, priority_label
 
     def _render_text(
@@ -149,12 +147,8 @@ class DigestBuilder:
             assert p.summary is not None  # guarded by Digest invariant
             type_label, priority_label = self._tag_label(p.summary)
             parts.append(f'<section id="article-{i}">')
-            parts.append(
-                f'<h3><a href="{attr(p.article.url)}">{e(p.article.title)}</a></h3>'
-            )
-            parts.append(
-                f"<p>タグ: {e(type_label)} / 優先度: {e(priority_label)}</p>"
-            )
+            parts.append(f'<h3><a href="{attr(p.article.url)}">{e(p.article.title)}</a></h3>')
+            parts.append(f"<p>タグ: {e(type_label)} / 優先度: {e(priority_label)}</p>")
             parts.append("<h4>3 行要約</h4><ul>")
             for s in p.summary.summary_lines:
                 parts.append(f"<li>{e(s)}</li>")
@@ -170,8 +164,7 @@ class DigestBuilder:
                 title_or_url = p.article.title or p.article.url
                 reason = p.error_reason or ""
                 parts.append(
-                    f'<li><a href="{attr(p.article.url)}">{e(title_or_url)}</a>'
-                    f" — {e(reason)}</li>"
+                    f'<li><a href="{attr(p.article.url)}">{e(title_or_url)}</a> — {e(reason)}</li>'
                 )
             parts.append("</ul>")
 
