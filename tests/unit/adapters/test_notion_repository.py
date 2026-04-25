@@ -10,6 +10,7 @@ from notion_client.errors import APIErrorCode, APIResponseError
 
 from read_later_digest.adapters.notion_repository import NotionRepository
 from read_later_digest.exceptions import NotionError
+from tests.conftest import make_notion_page, make_query_response
 
 
 def _rate_limited_error() -> APIResponseError:
@@ -32,36 +33,65 @@ def _validation_error() -> APIResponseError:
     )
 
 
-def _build_repo(client: Any) -> NotionRepository:
-    return NotionRepository(
-        client=client,
-        db_id="db-1",
-        status_property="Status",
-        status_unread="未読",
-        max_retries=3,
-        initial_backoff_sec=0,
-    )
+def _build_repo(client: Any, **overrides: Any) -> NotionRepository:
+    defaults: dict[str, Any] = {
+        "client": client,
+        "db_id": "db-1",
+        "status_property": "Status",
+        "status_unread": "未読",
+        "max_retries": 3,
+        "initial_backoff_sec": 0,
+    }
+    defaults.update(overrides)
+    return NotionRepository(**defaults)
 
 
 class TestListUnreadSinglePage:
-    async def test_returns_articles_sorted_by_added_at_then_page_id(
+    """Single-page happy path. Fixture `unread_page1.json` holds 3 records B(2026-04-20),
+    A(2026-04-22), C(2026-04-23) so the expected order after client-side sort is B, A, C.
+    """
+
+    async def test_returns_records_in_added_at_ascending_order(
         self, load_fixture: Any, make_fake_client: Any
     ) -> None:
-        page1 = load_fixture("unread_page1.json")
-        page1_single = copy.deepcopy(page1)
-        page1_single["has_more"] = False
-        page1_single["next_cursor"] = None
-
-        client = make_fake_client([page1_single])
+        page = copy.deepcopy(load_fixture("unread_page1.json"))
+        page["has_more"] = False
+        page["next_cursor"] = None
+        client = make_fake_client([page])
         repo = _build_repo(client)
 
         articles = await repo.list_unread()
 
         assert [a.page_id for a in articles] == ["page-id-B", "page-id-A", "page-id-C"]
-        assert articles[0].title == "Article B"
-        assert articles[0].url == "https://example.com/b"
-        assert articles[0].added_at == datetime.fromisoformat("2026-04-20T09:00:00+09:00")
-        assert articles[0].age_days == 5
+
+    async def test_maps_all_notion_properties_onto_article(
+        self, load_fixture: Any, make_fake_client: Any
+    ) -> None:
+        page = copy.deepcopy(load_fixture("unread_page1.json"))
+        page["has_more"] = False
+        page["next_cursor"] = None
+        client = make_fake_client([page])
+        repo = _build_repo(client)
+
+        first = (await repo.list_unread())[0]
+
+        assert first.page_id == "page-id-B"
+        assert first.title == "Article B"
+        assert first.url == "https://example.com/b"
+        assert first.added_at == datetime.fromisoformat("2026-04-20T09:00:00+09:00")
+        assert first.age_days == 5
+
+    async def test_sends_status_filter_and_no_cursor_on_first_call(
+        self, load_fixture: Any, make_fake_client: Any
+    ) -> None:
+        page = copy.deepcopy(load_fixture("unread_page1.json"))
+        page["has_more"] = False
+        page["next_cursor"] = None
+        client = make_fake_client([page])
+        repo = _build_repo(client)
+
+        await repo.list_unread()
+
         assert len(client.databases.calls) == 1
         first_call = client.databases.calls[0]
         assert first_call["database_id"] == "db-1"
@@ -89,19 +119,33 @@ class TestListUnreadPagination:
             "page-id-A",
             "page-id-C",
         ]
+
+    async def test_passes_next_cursor_on_second_call(
+        self, load_fixture: Any, make_fake_client: Any
+    ) -> None:
+        page1 = load_fixture("unread_page1.json")
+        page2 = load_fixture("unread_page2.json")
+        client = make_fake_client([page1, page2])
+        repo = _build_repo(client)
+
+        await repo.list_unread()
+
         assert len(client.databases.calls) == 2
         assert "start_cursor" not in client.databases.calls[0]
         assert client.databases.calls[1]["start_cursor"] == "cursor-2"
 
 
 class TestListUnreadEmpty:
-    async def test_returns_empty_list(self, load_fixture: Any, make_fake_client: Any) -> None:
+    async def test_returns_empty_list_with_one_api_call(
+        self, load_fixture: Any, make_fake_client: Any
+    ) -> None:
         client = make_fake_client([load_fixture("empty.json")])
         repo = _build_repo(client)
 
         articles = await repo.list_unread()
 
         assert articles == []
+        assert len(client.databases.calls) == 1
 
 
 class TestListUnreadConfigurableStatusValue:
@@ -109,19 +153,26 @@ class TestListUnreadConfigurableStatusValue:
         self, load_fixture: Any, make_fake_client: Any
     ) -> None:
         client = make_fake_client([load_fixture("empty.json")])
-        repo = NotionRepository(
-            client=client,
-            db_id="db-1",
-            status_property="Status",
-            status_unread="読了待ち",
-            initial_backoff_sec=0,
-        )
+        repo = _build_repo(client, status_unread="読了待ち")
 
         await repo.list_unread()
 
         assert client.databases.calls[0]["filter"] == {
             "property": "Status",
             "select": {"equals": "読了待ち"},
+        }
+
+    async def test_passes_custom_status_property_name_to_filter(
+        self, load_fixture: Any, make_fake_client: Any
+    ) -> None:
+        client = make_fake_client([load_fixture("empty.json")])
+        repo = _build_repo(client, status_property="読書状態")
+
+        await repo.list_unread()
+
+        assert client.databases.calls[0]["filter"] == {
+            "property": "読書状態",
+            "select": {"equals": "未読"},
         }
 
 
@@ -138,9 +189,31 @@ class TestListUnreadRetry:
         assert articles == []
         assert len(client.databases.calls) == 2
 
+    async def test_succeeds_when_last_allowed_retry_finally_returns(
+        self, load_fixture: Any, make_fake_client: Any, no_sleep: None
+    ) -> None:
+        # Boundary: max_retries=3 means 3 retries are allowed after the first attempt,
+        # so the 4th total call (3rd retry) is the last one that may succeed.
+        page = copy.deepcopy(load_fixture("empty.json"))
+        client = make_fake_client(
+            [
+                _rate_limited_error(),
+                _rate_limited_error(),
+                _rate_limited_error(),
+                page,
+            ]
+        )
+        repo = _build_repo(client, max_retries=3)
+
+        articles = await repo.list_unread()
+
+        assert articles == []
+        assert len(client.databases.calls) == 4
+
     async def test_raises_notion_error_when_retries_exhausted(
         self, make_fake_client: Any, no_sleep: None
     ) -> None:
+        # Boundary: one more 429 than max_retries triggers exhaustion.
         client = make_fake_client(
             [
                 _rate_limited_error(),
@@ -149,13 +222,13 @@ class TestListUnreadRetry:
                 _rate_limited_error(),
             ]
         )
-        repo = _build_repo(client)
+        repo = _build_repo(client, max_retries=3)
 
         with pytest.raises(NotionError):
             await repo.list_unread()
         assert len(client.databases.calls) == 4
 
-    async def test_non_rate_limit_error_is_wrapped_as_notion_error(
+    async def test_non_rate_limit_error_is_wrapped_as_notion_error_without_retry(
         self, make_fake_client: Any
     ) -> None:
         client = make_fake_client([_validation_error()])
@@ -168,121 +241,120 @@ class TestListUnreadRetry:
 
 class TestListUnreadMissingProperties:
     async def test_url_missing_record_is_skipped(self, make_fake_client: Any) -> None:
-        page = {
-            "results": [
-                {
-                    "id": "no-url",
-                    "properties": {
-                        "Name": {"title": [{"plain_text": "T"}]},
-                        "URL": {"url": None},
-                        "AddedAt": {"date": {"start": "2026-04-20T00:00:00+09:00"}},
-                        "Age": {"formula": {"number": 1}},
-                    },
-                },
-                {
-                    "id": "ok",
-                    "properties": {
-                        "Name": {"title": [{"plain_text": "T2"}]},
-                        "URL": {"url": "https://example.com/ok"},
-                        "AddedAt": {"date": {"start": "2026-04-21T00:00:00+09:00"}},
-                        "Age": {"formula": {"number": 1}},
-                    },
-                },
-            ],
-            "has_more": False,
-            "next_cursor": None,
-        }
+        page = make_query_response(
+            [
+                make_notion_page(page_id="no-url", url=None),
+                make_notion_page(page_id="ok", url="https://example.com/ok"),
+            ]
+        )
         client = make_fake_client([page])
         repo = _build_repo(client)
 
         articles = await repo.list_unread()
+
         assert [a.page_id for a in articles] == ["ok"]
 
-    async def test_empty_title_is_kept(self, make_fake_client: Any) -> None:
-        page = {
-            "results": [
-                {
-                    "id": "p1",
-                    "properties": {
-                        "Name": {"title": []},
-                        "URL": {"url": "https://example.com/x"},
-                        "AddedAt": {"date": {"start": "2026-04-20T00:00:00+09:00"}},
-                        "Age": {"formula": {"number": 0}},
-                    },
-                }
-            ],
-            "has_more": False,
-            "next_cursor": None,
-        }
+    async def test_url_missing_record_emits_warning_log_with_page_id(
+        self, make_fake_client: Any, captured_notion_warnings: list[tuple[str, dict[str, Any]]]
+    ) -> None:
+        page = make_query_response([make_notion_page(page_id="no-url", url=None)])
+        client = make_fake_client([page])
+        repo = _build_repo(client)
+
+        await repo.list_unread()
+
+        assert any(
+            "url" in msg.lower() and extra.get("page_id") == "no-url"
+            for msg, extra in captured_notion_warnings
+        )
+
+    async def test_empty_title_is_kept_with_warning(
+        self, make_fake_client: Any, captured_notion_warnings: list[tuple[str, dict[str, Any]]]
+    ) -> None:
+        page = make_query_response([make_notion_page(page_id="p1", title="")])
         client = make_fake_client([page])
         repo = _build_repo(client)
 
         articles = await repo.list_unread()
+
         assert articles[0].title == ""
-        assert articles[0].url == "https://example.com/x"
+        assert any(extra.get("page_id") == "p1" for _, extra in captured_notion_warnings)
 
     async def test_added_at_missing_record_is_skipped(self, make_fake_client: Any) -> None:
-        page = {
-            "results": [
-                {
-                    "id": "no-date",
-                    "properties": {
-                        "Name": {"title": [{"plain_text": "T"}]},
-                        "URL": {"url": "https://example.com/x"},
-                        "AddedAt": {"date": None},
-                        "Age": {"formula": {"number": 0}},
-                    },
-                }
-            ],
-            "has_more": False,
-            "next_cursor": None,
-        }
+        page = make_query_response([make_notion_page(page_id="no-date", added_at=None)])
         client = make_fake_client([page])
         repo = _build_repo(client)
 
         articles = await repo.list_unread()
+
         assert articles == []
+
+    async def test_added_at_missing_record_emits_warning_log(
+        self, make_fake_client: Any, captured_notion_warnings: list[tuple[str, dict[str, Any]]]
+    ) -> None:
+        page = make_query_response([make_notion_page(page_id="no-date", added_at=None)])
+        client = make_fake_client([page])
+        repo = _build_repo(client)
+
+        await repo.list_unread()
+
+        assert any(
+            "added_at" in msg.lower() and extra.get("page_id") == "no-date"
+            for msg, extra in captured_notion_warnings
+        )
+
+    async def test_age_missing_returns_none_age_days(self, make_fake_client: Any) -> None:
+        page = make_query_response([make_notion_page(page_id="p1", age_days=None)])
+        client = make_fake_client([page])
+        repo = _build_repo(client)
+
+        articles = await repo.list_unread()
+
+        assert articles[0].age_days is None
 
 
 class TestListUnreadClientSideSort:
     async def test_sorts_by_added_at_even_if_api_returns_unsorted(
         self, make_fake_client: Any
     ) -> None:
-        page = {
-            "results": [
-                {
-                    "id": "z",
-                    "properties": {
-                        "Name": {"title": [{"plain_text": "Z"}]},
-                        "URL": {"url": "https://example.com/z"},
-                        "AddedAt": {"date": {"start": "2026-04-25T00:00:00+09:00"}},
-                        "Age": {"formula": {"number": 0}},
-                    },
-                },
-                {
-                    "id": "a",
-                    "properties": {
-                        "Name": {"title": [{"plain_text": "A"}]},
-                        "URL": {"url": "https://example.com/a"},
-                        "AddedAt": {"date": {"start": "2026-04-20T00:00:00+09:00"}},
-                        "Age": {"formula": {"number": 5}},
-                    },
-                },
-                {
-                    "id": "b",
-                    "properties": {
-                        "Name": {"title": [{"plain_text": "B"}]},
-                        "URL": {"url": "https://example.com/b"},
-                        "AddedAt": {"date": {"start": "2026-04-20T00:00:00+09:00"}},
-                        "Age": {"formula": {"number": 5}},
-                    },
-                },
-            ],
-            "has_more": False,
-            "next_cursor": None,
-        }
+        page = make_query_response(
+            [
+                make_notion_page(page_id="z", added_at="2026-04-25T00:00:00+09:00"),
+                make_notion_page(page_id="a", added_at="2026-04-20T00:00:00+09:00"),
+                make_notion_page(page_id="b", added_at="2026-04-20T00:00:00+09:00"),
+            ]
+        )
         client = make_fake_client([page])
         repo = _build_repo(client)
 
         articles = await repo.list_unread()
+
         assert [a.page_id for a in articles] == ["a", "b", "z"]
+
+    async def test_tie_break_uses_page_id_ascending(self, make_fake_client: Any) -> None:
+        # Same added_at across all three records; only page_id determines order.
+        same_time = "2026-04-20T00:00:00+09:00"
+        page = make_query_response(
+            [
+                make_notion_page(page_id="banana", added_at=same_time),
+                make_notion_page(page_id="apple", added_at=same_time),
+                make_notion_page(page_id="cherry", added_at=same_time),
+            ]
+        )
+        client = make_fake_client([page])
+        repo = _build_repo(client)
+
+        articles = await repo.list_unread()
+
+        assert [a.page_id for a in articles] == ["apple", "banana", "cherry"]
+
+    async def test_single_record_returns_single_article(self, make_fake_client: Any) -> None:
+        # Boundary: one item.
+        page = make_query_response([make_notion_page(page_id="only")])
+        client = make_fake_client([page])
+        repo = _build_repo(client)
+
+        articles = await repo.list_unread()
+
+        assert len(articles) == 1
+        assert articles[0].page_id == "only"
