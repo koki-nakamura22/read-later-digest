@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from notion_client.errors import APIResponseError
 
-from read_later_digest.domain.models import NotionArticle
+from read_later_digest.domain.models import ArticleSummary, NotionArticle
 from read_later_digest.exceptions import NotionError
 from read_later_digest.logging_setup import logger
 
@@ -23,6 +23,19 @@ class NotionPagesAPI(Protocol):
     def update(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
+class NotionBlocksChildrenAPI(Protocol):
+    """Subset of `notion_client.Client.blocks.children` used by `NotionRepository`."""
+
+    def append(self, **kwargs: Any) -> dict[str, Any]: ...
+
+
+class NotionBlocksAPI(Protocol):
+    """Subset of `notion_client.Client.blocks` used by `NotionRepository`."""
+
+    @property
+    def children(self) -> NotionBlocksChildrenAPI: ...
+
+
 class NotionClientLike(Protocol):
     """Structural type matching `notion_client.Client` for the parts we use."""
 
@@ -31,6 +44,9 @@ class NotionClientLike(Protocol):
 
     @property
     def pages(self) -> NotionPagesAPI: ...
+
+    @property
+    def blocks(self) -> NotionBlocksAPI: ...
 
 
 class NotionRepository:
@@ -44,6 +60,8 @@ class NotionRepository:
         status_property: str = "Status",
         status_unread: str = "未読",
         status_processed: str = "処理済み",
+        type_property: str = "Type",
+        priority_property: str = "Priority",
         max_retries: int = 3,
         initial_backoff_sec: float = 1.0,
     ) -> None:
@@ -52,6 +70,8 @@ class NotionRepository:
         self._status_property = status_property
         self._status_unread = status_unread
         self._status_processed = status_processed
+        self._type_property = type_property
+        self._priority_property = priority_property
         self._max_retries = max_retries
         self._initial_backoff_sec = initial_backoff_sec
 
@@ -81,6 +101,53 @@ class NotionRepository:
                 self._status_property: {"select": {"name": self._status_processed}},
             },
         )
+
+    async def write_summary(self, page_id: str, summary: ArticleSummary) -> None:
+        """Append summary blocks to the page body and update Type/Priority properties.
+
+        Properties are updated only when the LLM produced an enum value; missing
+        type/priority leave the corresponding property untouched.
+        """
+        children = _build_summary_blocks(summary)
+        await self._append_children_with_retry(page_id=page_id, children=children)
+
+        properties: dict[str, Any] = {}
+        if summary.type_ is not None:
+            properties[self._type_property] = {"select": {"name": summary.type_.value}}
+        if summary.priority is not None:
+            properties[self._priority_property] = {"select": {"name": summary.priority.value}}
+        if properties:
+            await self._update_with_retry(page_id=page_id, properties=properties)
+
+    async def write_failure(self, page_id: str, reason: str) -> None:
+        """Append a failure note to the page body. Properties are not modified."""
+        children = [_paragraph_block(f"[処理失敗] {reason}")]
+        await self._append_children_with_retry(page_id=page_id, children=children)
+
+    async def _append_children_with_retry(
+        self, *, page_id: str, children: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        delay = self._initial_backoff_sec
+        last_error: APIResponseError | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                return await asyncio.to_thread(
+                    self._client.blocks.children.append,
+                    block_id=page_id,
+                    children=children,
+                )
+            except APIResponseError as e:
+                last_error = e
+                if e.status == 429 and attempt < self._max_retries:
+                    logger.warning(
+                        "notion api rate limited; retrying",
+                        extra={"attempt": attempt + 1, "delay_sec": delay},
+                    )
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                    continue
+                raise NotionError(f"notion api error (status={e.status}): {e}") from e
+        raise NotionError(f"notion api retries exhausted: {last_error}") from last_error
 
     async def _update_with_retry(
         self, *, page_id: str, properties: dict[str, Any]
@@ -218,3 +285,42 @@ class NotionRepository:
     @staticmethod
     def _sort(articles: list[NotionArticle]) -> list[NotionArticle]:
         return sorted(articles, key=lambda a: (a.added_at, a.page_id))
+
+
+def _paragraph_block(text: str) -> dict[str, Any]:
+    return {
+        "object": "block",
+        "type": "paragraph",
+        "paragraph": {
+            "rich_text": [{"type": "text", "text": {"content": text}}],
+        },
+    }
+
+
+def _heading_block(text: str) -> dict[str, Any]:
+    return {
+        "object": "block",
+        "type": "heading_3",
+        "heading_3": {
+            "rich_text": [{"type": "text", "text": {"content": text}}],
+        },
+    }
+
+
+def _bullet_block(text: str) -> dict[str, Any]:
+    return {
+        "object": "block",
+        "type": "bulleted_list_item",
+        "bulleted_list_item": {
+            "rich_text": [{"type": "text", "text": {"content": text}}],
+        },
+    }
+
+
+def _build_summary_blocks(summary: ArticleSummary) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = [_heading_block("要約")]
+    blocks.extend(_paragraph_block(line) for line in summary.summary_lines)
+    if summary.key_points:
+        blocks.append(_heading_block("重要ポイント"))
+        blocks.extend(_bullet_block(point) for point in summary.key_points)
+    return blocks
