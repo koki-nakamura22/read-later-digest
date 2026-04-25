@@ -4,3 +4,7 @@ class AppError(Exception):
 
 class NotionError(AppError):
     """Raised when Notion API interaction fails."""
+
+
+class LLMError(AppError):
+    """Raised when LLM summarization fails after retries."""
