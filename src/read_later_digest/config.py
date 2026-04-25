@@ -22,6 +22,7 @@ class Config:
     mail_to: list[str]
     notion_status_property: str = "Status"
     notion_status_unread: str = "未読"
+    notion_status_processed: str = "処理済み"
     llm_model: str = "claude-sonnet-4-6"
     llm_body_max_chars: int = 30_000
     llm_max_rate_limit_retries: int = 3
@@ -44,6 +45,7 @@ class Config:
             mail_to=mail_to,
             notion_status_property=os.environ.get("NOTION_STATUS_PROPERTY", "Status"),
             notion_status_unread=os.environ.get("NOTION_STATUS_UNREAD", "未読"),
+            notion_status_processed=os.environ.get("NOTION_STATUS_PROCESSED", "処理済み"),
             llm_model=os.environ.get("LLM_MODEL", "claude-sonnet-4-6"),
             llm_body_max_chars=int(os.environ.get("LLM_BODY_MAX_CHARS", "30000")),
             llm_max_rate_limit_retries=int(os.environ.get("LLM_MAX_RATE_LIMIT_RETRIES", "3")),
