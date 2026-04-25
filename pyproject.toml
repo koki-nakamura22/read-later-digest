@@ -10,6 +10,7 @@ dependencies = [
     "trafilatura>=1.12",
     "anthropic>=0.40",
     "pydantic>=2.9",
+    "boto3>=1.35",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +44,10 @@ select = ["E", "F", "I", "B", "UP", "N", "SIM"]
 python_version = "3.13"
 strict = true
 files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["botocore.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
