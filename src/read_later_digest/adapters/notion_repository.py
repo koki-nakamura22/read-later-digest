@@ -17,11 +17,20 @@ class NotionDatabasesAPI(Protocol):
     def query(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
+class NotionPagesAPI(Protocol):
+    """Subset of `notion_client.Client.pages` used by `NotionRepository`."""
+
+    def update(self, **kwargs: Any) -> dict[str, Any]: ...
+
+
 class NotionClientLike(Protocol):
     """Structural type matching `notion_client.Client` for the parts we use."""
 
     @property
     def databases(self) -> NotionDatabasesAPI: ...
+
+    @property
+    def pages(self) -> NotionPagesAPI: ...
 
 
 class NotionRepository:
@@ -34,6 +43,7 @@ class NotionRepository:
         db_id: str,
         status_property: str = "Status",
         status_unread: str = "未読",
+        status_processed: str = "処理済み",
         max_retries: int = 3,
         initial_backoff_sec: float = 1.0,
     ) -> None:
@@ -41,6 +51,7 @@ class NotionRepository:
         self._db_id = db_id
         self._status_property = status_property
         self._status_unread = status_unread
+        self._status_processed = status_processed
         self._max_retries = max_retries
         self._initial_backoff_sec = initial_backoff_sec
 
@@ -61,6 +72,38 @@ class NotionRepository:
             if cursor is None:
                 break
         return self._sort(articles)
+
+    async def mark_processed(self, page_id: str) -> None:
+        """Update the page's Status property to the configured processed value."""
+        await self._update_with_retry(
+            page_id=page_id,
+            properties={
+                self._status_property: {"select": {"name": self._status_processed}},
+            },
+        )
+
+    async def _update_with_retry(
+        self, *, page_id: str, properties: dict[str, Any]
+    ) -> dict[str, Any]:
+        delay = self._initial_backoff_sec
+        last_error: APIResponseError | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                return await asyncio.to_thread(
+                    self._client.pages.update, page_id=page_id, properties=properties
+                )
+            except APIResponseError as e:
+                last_error = e
+                if e.status == 429 and attempt < self._max_retries:
+                    logger.warning(
+                        "notion api rate limited; retrying",
+                        extra={"attempt": attempt + 1, "delay_sec": delay},
+                    )
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                    continue
+                raise NotionError(f"notion api error (status={e.status}): {e}") from e
+        raise NotionError(f"notion api retries exhausted: {last_error}") from last_error
 
     async def _query_with_retry(self, *, start_cursor: str | None) -> dict[str, Any]:
         delay = self._initial_backoff_sec

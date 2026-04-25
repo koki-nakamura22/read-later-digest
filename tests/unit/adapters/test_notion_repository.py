@@ -358,3 +358,95 @@ class TestListUnreadClientSideSort:
 
         assert len(articles) == 1
         assert articles[0].page_id == "only"
+
+
+class TestMarkProcessed:
+    """Behavior of `NotionRepository.mark_processed` (F6)."""
+
+    async def test_sends_select_payload_with_default_values(
+        self, make_fake_pages_client: Any
+    ) -> None:
+        client = make_fake_pages_client([])
+        repo = _build_repo(client)
+
+        await repo.mark_processed("page-id-1")
+
+        assert client.pages.calls == [
+            {
+                "page_id": "page-id-1",
+                "properties": {"Status": {"select": {"name": "処理済み"}}},
+            }
+        ]
+
+    async def test_uses_configured_status_property_and_value(
+        self, make_fake_pages_client: Any
+    ) -> None:
+        client = make_fake_pages_client([])
+        repo = _build_repo(
+            client,
+            status_property="ステータス",
+            status_processed="Done",
+        )
+
+        await repo.mark_processed("page-id-2")
+
+        assert client.pages.calls[0]["properties"] == {
+            "ステータス": {"select": {"name": "Done"}}
+        }
+
+    async def test_retries_on_429_then_succeeds(
+        self, make_fake_pages_client: Any, no_sleep: None
+    ) -> None:
+        client = make_fake_pages_client([_rate_limited_error(), {}])
+        repo = _build_repo(client)
+
+        await repo.mark_processed("page-id-4")
+
+        assert len(client.pages.calls) == 2
+
+    async def test_succeeds_when_last_allowed_retry_finally_returns(
+        self, make_fake_pages_client: Any, no_sleep: None
+    ) -> None:
+        # Boundary: max_retries=3 means 3 retries after the first attempt; the 4th
+        # total call may still succeed.
+        client = make_fake_pages_client(
+            [
+                _rate_limited_error(),
+                _rate_limited_error(),
+                _rate_limited_error(),
+                {},
+            ]
+        )
+        repo = _build_repo(client, max_retries=3)
+
+        await repo.mark_processed("page-id-edge")
+
+        assert len(client.pages.calls) == 4
+
+    async def test_raises_notion_error_when_retries_exhausted(
+        self, make_fake_pages_client: Any, no_sleep: None
+    ) -> None:
+        # Boundary: max_retries=3 → one more 429 (4 total) triggers exhaustion.
+        client = make_fake_pages_client(
+            [
+                _rate_limited_error(),
+                _rate_limited_error(),
+                _rate_limited_error(),
+                _rate_limited_error(),
+            ]
+        )
+        repo = _build_repo(client, max_retries=3)
+
+        with pytest.raises(NotionError):
+            await repo.mark_processed("page-id-5")
+        assert len(client.pages.calls) == 4
+
+    async def test_non_rate_limit_error_is_wrapped_without_retry(
+        self, make_fake_pages_client: Any
+    ) -> None:
+        client = make_fake_pages_client([_validation_error()])
+        repo = _build_repo(client)
+
+        with pytest.raises(NotionError):
+            await repo.mark_processed("page-id-6")
+        assert len(client.pages.calls) == 1

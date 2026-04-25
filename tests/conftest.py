@@ -42,15 +42,55 @@ class FakeDatabasesAPI:
         return nxt
 
 
+class FakePagesAPI:
+    """Test double for notion_client.Client.pages.
+
+    Each call to update() pops the next response from a queue. Responses can be:
+      - a dict (returned as-is)
+      - an Exception instance (raised)
+      - omitted entirely: the call returns an empty dict (success-by-default)
+    """
+
+    def __init__(self, responses: Iterable[dict[str, Any] | Exception] | None = None) -> None:
+        self._responses: list[dict[str, Any] | Exception] = list(responses or [])
+        self.calls: list[dict[str, Any]] = []
+
+    def update(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        if not self._responses:
+            return {}
+        nxt = self._responses.pop(0)
+        if isinstance(nxt, Exception):
+            raise nxt
+        return nxt
+
+
 class FakeNotionClient:
-    def __init__(self, databases: FakeDatabasesAPI) -> None:
+    def __init__(
+        self,
+        databases: FakeDatabasesAPI,
+        pages: FakePagesAPI | None = None,
+    ) -> None:
         self.databases = databases
+        self.pages = pages or FakePagesAPI()
 
 
 @pytest.fixture
 def make_fake_client() -> Callable[[Iterable[dict[str, Any] | Exception]], FakeNotionClient]:
     def _factory(responses: Iterable[dict[str, Any] | Exception]) -> FakeNotionClient:
         return FakeNotionClient(FakeDatabasesAPI(responses))
+
+    return _factory
+
+
+@pytest.fixture
+def make_fake_pages_client() -> Callable[
+    [Iterable[dict[str, Any] | Exception]], FakeNotionClient
+]:
+    """Build a FakeNotionClient whose `pages.update` is driven by a response queue."""
+
+    def _factory(responses: Iterable[dict[str, Any] | Exception]) -> FakeNotionClient:
+        return FakeNotionClient(FakeDatabasesAPI([]), FakePagesAPI(responses))
 
     return _factory
 
