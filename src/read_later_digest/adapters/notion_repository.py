@@ -12,15 +12,21 @@ from read_later_digest.logging_setup import logger
 
 
 class NotionDatabasesAPI(Protocol):
+    """Subset of `notion_client.Client.databases` used by `NotionRepository`."""
+
     def query(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
 class NotionClientLike(Protocol):
+    """Structural type matching `notion_client.Client` for the parts we use."""
+
     @property
     def databases(self) -> NotionDatabasesAPI: ...
 
 
 class NotionRepository:
+    """Read-side adapter for the Notion DB that holds saved articles."""
+
     def __init__(
         self,
         *,
@@ -39,6 +45,11 @@ class NotionRepository:
         self._initial_backoff_sec = initial_backoff_sec
 
     async def list_unread(self) -> list[NotionArticle]:
+        """Return all pages whose Status equals the configured unread value.
+
+        Pages without a usable URL or AddedAt are skipped with a warning.
+        Results are sorted by added_at ascending, then by page_id ascending.
+        """
         articles: list[NotionArticle] = []
         cursor: str | None = None
         while True:

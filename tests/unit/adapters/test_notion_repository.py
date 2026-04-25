@@ -104,6 +104,27 @@ class TestListUnreadEmpty:
         assert articles == []
 
 
+class TestListUnreadConfigurableStatusValue:
+    async def test_passes_custom_status_unread_value_to_filter(
+        self, load_fixture: Any, make_fake_client: Any
+    ) -> None:
+        client = make_fake_client([load_fixture("empty.json")])
+        repo = NotionRepository(
+            client=client,
+            db_id="db-1",
+            status_property="Status",
+            status_unread="読了待ち",
+            initial_backoff_sec=0,
+        )
+
+        await repo.list_unread()
+
+        assert client.databases.calls[0]["filter"] == {
+            "property": "Status",
+            "select": {"equals": "読了待ち"},
+        }
+
+
 class TestListUnreadRetry:
     async def test_retries_on_429_then_succeeds(
         self, load_fixture: Any, make_fake_client: Any, no_sleep: None
