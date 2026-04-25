@@ -1,0 +1,49 @@
+{
+  "object": "list",
+  "results": [
+    {
+      "object": "page",
+      "id": "page-id-A",
+      "properties": {
+        "Name": {
+          "type": "title",
+          "title": [{"plain_text": "Article A"}]
+        },
+        "URL": {"type": "url", "url": "https://example.com/a"},
+        "Status": {"type": "select", "select": {"name": "未読"}},
+        "AddedAt": {"type": "date", "date": {"start": "2026-04-22T09:00:00+09:00"}},
+        "Age": {"type": "formula", "formula": {"type": "number", "number": 3}}
+      }
+    },
+    {
+      "object": "page",
+      "id": "page-id-B",
+      "properties": {
+        "Name": {
+          "type": "title",
+          "title": [{"plain_text": "Article "}, {"plain_text": "B"}]
+        },
+        "URL": {"type": "url", "url": "https://example.com/b"},
+        "Status": {"type": "select", "select": {"name": "未読"}},
+        "AddedAt": {"type": "date", "date": {"start": "2026-04-20T09:00:00+09:00"}},
+        "Age": {"type": "formula", "formula": {"type": "number", "number": 5}}
+      }
+    },
+    {
+      "object": "page",
+      "id": "page-id-C",
+      "properties": {
+        "Name": {
+          "type": "title",
+          "title": [{"plain_text": "Article C"}]
+        },
+        "URL": {"type": "url", "url": "https://example.com/c"},
+        "Status": {"type": "select", "select": {"name": "未読"}},
+        "AddedAt": {"type": "date", "date": {"start": "2026-04-23T09:00:00+09:00"}},
+        "Age": {"type": "formula", "formula": {"type": "number", "number": 2}}
+      }
+    }
+  ],
+  "has_more": true,
+  "next_cursor": "cursor-2"
+}
