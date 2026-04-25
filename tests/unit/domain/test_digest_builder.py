@@ -124,6 +124,8 @@ def test_single_success_includes_title_url_summary_keypoints_and_tags(
         assert fragment in rendered.html
     assert "技術" in rendered.text
     assert "高" in rendered.text
+    assert "技術" in rendered.html
+    assert "高" in rendered.html
 
 
 def test_unset_type_and_priority_render_as_japanese_placeholders(

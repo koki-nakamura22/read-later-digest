@@ -80,6 +80,15 @@ class ProcessedArticle:
 
 @dataclass(frozen=True)
 class Digest:
+    """Aggregated processing outcome for one batch run.
+
+    Invariants (caller's responsibility — not validated):
+    - every element of `succeeded` has `status == ProcessStatus.SUCCESS`
+      and a non-None `summary`
+    - every element of `failed` has `status != ProcessStatus.SUCCESS`
+      and a non-None `error_reason`
+    """
+
     target_date: str
     succeeded: list[ProcessedArticle]
     failed: list[ProcessedArticle]
