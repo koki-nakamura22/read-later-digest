@@ -44,6 +44,8 @@ def _is_blocked_host(host: str, resolver: HostResolver) -> bool:
         addresses = resolver(host)
     except socket.gaierror:
         return True
+    if not addresses:
+        return True
     for addr in addresses:
         try:
             ip = ipaddress.ip_address(addr)

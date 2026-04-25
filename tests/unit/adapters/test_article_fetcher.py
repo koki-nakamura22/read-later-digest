@@ -99,6 +99,19 @@ class TestFetchTimeout:
         assert result.reason is FetchFailureReason.TIMEOUT
 
 
+class TestFetchNetworkError:
+    async def test_connect_error_is_recorded_as_network_failure(self) -> None:
+        async with httpx.AsyncClient() as client, respx.mock:
+            respx.get(EXTERNAL_URL).mock(side_effect=httpx.ConnectError("refused"))
+            fetcher = _build_fetcher(client)
+
+            result = await fetcher.fetch(EXTERNAL_URL)
+
+        assert result.ok is False
+        assert result.reason is FetchFailureReason.NETWORK
+        assert result.status_code is None
+
+
 class TestFetchExtractionFailure:
     async def test_unextractable_html_returns_extraction_empty(self) -> None:
         async with httpx.AsyncClient() as client, respx.mock:
@@ -175,6 +188,15 @@ class TestFetchSchemeAndHostGuards:
         async with httpx.AsyncClient() as client, respx.mock:
             fetcher = _build_fetcher(client, host_resolver=lambda _host: [resolved_ip])
             result = await fetcher.fetch(url)
+
+        assert result.ok is False
+        assert result.reason is FetchFailureReason.BLOCKED_HOST
+        assert respx.calls.call_count == 0
+
+    async def test_unresolvable_host_is_blocked(self) -> None:
+        async with httpx.AsyncClient() as client, respx.mock:
+            fetcher = _build_fetcher(client, host_resolver=lambda _host: [])
+            result = await fetcher.fetch("https://nope.example/x")
 
         assert result.ok is False
         assert result.reason is FetchFailureReason.BLOCKED_HOST
