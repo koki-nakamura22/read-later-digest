@@ -34,3 +34,24 @@ class FetchResult:
     text: str | None
     reason: FetchFailureReason | None
     status_code: int | None
+
+
+class ArticleType(StrEnum):
+    ARTICLE = "記事"
+    TECH = "技術"
+    IDEA = "ネタ"
+    WORK = "仕事"
+
+
+class Priority(StrEnum):
+    HIGH = "高"
+    MID = "中"
+    LOW = "低"
+
+
+@dataclass(frozen=True)
+class ArticleSummary:
+    summary_lines: list[str]
+    key_points: list[str]
+    type_: ArticleType | None
+    priority: Priority | None
