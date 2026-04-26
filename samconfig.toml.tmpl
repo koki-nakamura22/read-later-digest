@@ -7,12 +7,22 @@ version = 0.1
 # 自身の環境に合わせて値を編集してください:
 #     cp samconfig.toml.tmpl samconfig.toml
 #
-# 役割:
-#   - `sam build` / `sam deploy` の標準設定 (parameter_overrides 等)
-#   - ローカル実行 (`uv run`) 用の環境変数の単一の出所(下記 [local])
+# 役割: ローカル (`uv run`) と AWS Lambda の両方が参照する
+#       「環境変数の単一の出所 (single source of truth)」。
 #
-# `samconfig.toml` 自体は .gitignore 済み。機密値も当面ここに置く
-# (個人利用のため)。値変更後は以下で `.env` を再生成:
+# 構成:
+#   - [default.deploy.parameters].parameter_overrides
+#       非機密設定の SoT。template.yaml の Parameters と PascalCase で対応。
+#       sam deploy では CloudFormation 経由で Lambda env として注入され、
+#       ローカルでは scripts/gen-env.py が UPPER_SNAKE に変換して
+#       .env に展開する (両環境で同じ env キー名・意味になる)。
+#   - [local]
+#       「Lambda runtime がビルトインで提供する値 (AWS_REGION)」と
+#       「Lambda では Secrets Manager / SSM 経由で注入される機密」のみ。
+#       これらはローカル限定で .env に書き出されるが、Lambda の
+#       Environment.Variables には載せない。
+#
+# `samconfig.toml` 自体は .gitignore 済み。値変更後は以下で `.env` を再生成:
 #     uv run python scripts/gen-env.py
 #
 # TODO: リポジトリ共有 / CI 導入 / prod 環境分離のいずれかが
@@ -34,43 +44,41 @@ confirm_changeset = true
 resolve_s3 = true
 # template.yaml の Parameters と対応 (PascalCase)。
 # scripts/gen-env.py が UPPER_SNAKE に変換して .env にも展開する。
+# ここの値が「ローカル + Lambda」両方の env の SoT。
 parameter_overrides = [
     "NotionDbId=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "NotionStatusUnread=未読",
     "NotionStatusProcessed=処理済み",
     "MailFrom=digest@example.com",
     "MailTo=me@example.com",
+    "NotifyChannels=mail",
+    "NotionStatusProperty=Status",
+    "NotionTypeProperty=Type",
+    "NotionPriorityProperty=Priority",
+    "LlmModel=claude-sonnet-4-6",
+    "LlmConcurrency=5",
+    "LlmBodyMaxChars=30000",
+    "LlmMaxRateLimitRetries=3",
+    "LlmInitialBackoffSec=1.0",
+    "FetchTimeoutSec=15.0",
+    "SlackTimeoutSec=10.0",
 ]
 
 # ------------------------------------------------------------
-# [local] — `uv run` でのローカル実行用 env (Lambda へは流れない)
+# [local] — ローカル限定の env (Lambda の Environment.Variables には載らない)
 #
-# scripts/gen-env.py が以下の2系統を統合して `.env` を生成する:
-#   1. 上記 [default.deploy.parameters].parameter_overrides
-#      (PascalCase → UPPER_SNAKE に変換)
-#   2. 下記 [local] の値 (UPPER_SNAKE のまま)
-#
-# 機密 (NOTION_TOKEN / ANTHROPIC_API_KEY / SLACK_WEBHOOK_URL) は
-# ここに記載する。Lambda 実行時はこれらが Secrets Manager / SSM
-# 経由で注入される想定 (template.yaml: SECRETS_PREFIX 参照)。
+# 1. AWS_REGION:
+#    Lambda runtime はこの値をビルトインで提供するため、template.yaml
+#    の Environment.Variables には宣言しない。ローカル (uv run / boto3
+#    クライアント生成時) では明示が必要なのでここに置く。
+# 2. 機密 (NOTION_TOKEN / ANTHROPIC_API_KEY / SLACK_WEBHOOK_URL):
+#    Lambda 実行時は Secrets Manager / SSM (template.yaml: SECRETS_PREFIX)
+#    経由で注入される想定。ローカルでは .env 経由で渡すためここに置く。
 # ------------------------------------------------------------
 [local]
+AWS_REGION = "ap-northeast-1"
 NOTION_TOKEN = "secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 ANTHROPIC_API_KEY = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-AWS_REGION = "ap-northeast-1"
-NOTIFY_CHANNELS = "mail"
 
-# Slack 通知を有効にする場合 (NOTIFY_CHANNELS に "slack" を含めた時)
+# Slack 通知を有効にする場合 (parameter_overrides の NotifyChannels に "slack" を含める)
 # SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/xxx/yyy/zzz"
-# SLACK_TIMEOUT_SEC = "10.0"
-
-# 任意の上書き (デフォルト値は src/read_later_digest/config.py 参照)
-# LLM_MODEL = "claude-sonnet-4-6"
-# LLM_CONCURRENCY = "5"
-# LLM_BODY_MAX_CHARS = "30000"
-# LLM_MAX_RATE_LIMIT_RETRIES = "3"
-# LLM_INITIAL_BACKOFF_SEC = "1.0"
-# FETCH_TIMEOUT_SEC = "15.0"
-# NOTION_STATUS_PROPERTY = "Status"
-# NOTION_TYPE_PROPERTY = "Type"
-# NOTION_PRIORITY_PROPERTY = "Priority"
