@@ -21,7 +21,24 @@ def load_fixture() -> Callable[[str], dict[str, Any]]:
 
 
 class FakeDatabasesAPI:
-    """Test double for notion_client.Client.databases.
+    """Test double for notion_client.Client.databases (3.x: only `retrieve`).
+
+    `retrieve` returns a fixed descriptor whose first `data_sources` entry is
+    `{"id": "ds-1"}` so `NotionRepository._get_data_source_id` resolves
+    deterministically across tests.
+    """
+
+    def __init__(self, data_source_id: str = "ds-1") -> None:
+        self._data_source_id = data_source_id
+        self.retrieve_calls: list[dict[str, Any]] = []
+
+    def retrieve(self, **kwargs: Any) -> dict[str, Any]:
+        self.retrieve_calls.append(kwargs)
+        return {"data_sources": [{"id": self._data_source_id}]}
+
+
+class FakeDataSourcesAPI:
+    """Test double for notion_client.Client.data_sources.
 
     Each call to query() pops the next response from a queue. Responses can be:
       - a dict (returned as-is)
@@ -35,7 +52,7 @@ class FakeDatabasesAPI:
     def query(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(kwargs)
         if not self._responses:
-            raise AssertionError("FakeDatabasesAPI.query called more times than expected")
+            raise AssertionError("FakeDataSourcesAPI.query called more times than expected")
         nxt = self._responses.pop(0)
         if isinstance(nxt, Exception):
             raise nxt
@@ -90,11 +107,13 @@ class FakeBlocksAPI:
 class FakeNotionClient:
     def __init__(
         self,
-        databases: FakeDatabasesAPI,
+        data_sources: FakeDataSourcesAPI,
+        databases: FakeDatabasesAPI | None = None,
         pages: FakePagesAPI | None = None,
         blocks: FakeBlocksAPI | None = None,
     ) -> None:
-        self.databases = databases
+        self.databases = databases or FakeDatabasesAPI()
+        self.data_sources = data_sources
         self.pages = pages or FakePagesAPI()
         self.blocks = blocks or FakeBlocksAPI()
 
@@ -102,7 +121,7 @@ class FakeNotionClient:
 @pytest.fixture
 def make_fake_client() -> Callable[[Iterable[dict[str, Any] | Exception]], FakeNotionClient]:
     def _factory(responses: Iterable[dict[str, Any] | Exception]) -> FakeNotionClient:
-        return FakeNotionClient(FakeDatabasesAPI(responses))
+        return FakeNotionClient(FakeDataSourcesAPI(responses))
 
     return _factory
 
@@ -112,7 +131,7 @@ def make_fake_pages_client() -> Callable[[Iterable[dict[str, Any] | Exception]],
     """Build a FakeNotionClient whose `pages.update` is driven by a response queue."""
 
     def _factory(responses: Iterable[dict[str, Any] | Exception]) -> FakeNotionClient:
-        return FakeNotionClient(FakeDatabasesAPI([]), FakePagesAPI(responses))
+        return FakeNotionClient(FakeDataSourcesAPI([]), pages=FakePagesAPI(responses))
 
     return _factory
 

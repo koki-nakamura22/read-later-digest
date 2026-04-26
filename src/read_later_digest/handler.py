@@ -11,7 +11,10 @@ from notion_client import Client as NotionClient
 
 from read_later_digest.adapters.article_fetcher import ArticleFetcher
 from read_later_digest.adapters.llm.claude import ClaudeLLMClient
+from read_later_digest.adapters.mailer.base import Mailer
 from read_later_digest.adapters.mailer.ses import SesMailer
+from read_later_digest.adapters.notifier.base import Notifier
+from read_later_digest.adapters.notifier.slack import SlackNotifier
 from read_later_digest.adapters.notion_repository import NotionClientLike, NotionRepository
 from read_later_digest.config import Config, NotificationChannel
 from read_later_digest.domain.digest_builder import DigestBuilder
@@ -36,14 +39,6 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
 
 
 async def _run(config: Config) -> RunResult:
-    # Orchestrator currently routes through Mailer only. Other channels are accepted
-    # by Config (forward-compatible) but their runtime wiring lands in a follow-up PR.
-    if config.notification_channels != frozenset({NotificationChannel.MAIL}):
-        raise NotImplementedError(
-            "multi-channel notification routing is not yet wired in the orchestrator; "
-            f"only NOTIFY_CHANNELS=mail is supported at runtime "
-            f"(got: {sorted(c.value for c in config.notification_channels)})"
-        )
     notion_client: NotionClientLike = NotionClient(auth=config.notion_token)  # type: ignore[assignment]
     notion_repo = NotionRepository(
         client=notion_client,
@@ -67,17 +62,32 @@ async def _run(config: Config) -> RunResult:
         max_rate_limit_retries=config.llm_max_rate_limit_retries,
         initial_backoff_sec=config.llm_initial_backoff_sec,
     )
-    mailer = SesMailer(
-        client=boto3.client("ses", region_name=config.aws_region),
-        source=config.mail_from,
-    )
+
+    mailer: Mailer | None = None
+    if NotificationChannel.MAIL in config.notification_channels:
+        mailer = SesMailer(
+            client=boto3.client("ses", region_name=config.aws_region),
+            source=config.mail_from,
+        )
+    notifier: Notifier | None = None
+    if NotificationChannel.SLACK in config.notification_channels:
+        # Config.from_env enforces SLACK_WEBHOOK_URL when slack is enabled,
+        # so the assertion just narrows the Optional for type checkers.
+        assert config.slack_webhook_url is not None
+        notifier = SlackNotifier(
+            client=http_client,
+            webhook_url=config.slack_webhook_url,
+            timeout_sec=config.slack_timeout_sec,
+        )
+
     orchestrator = Orchestrator(
         notion=notion_repo,
         fetcher=fetcher,
         llm=llm,
-        mailer=mailer,
         digest_builder=DigestBuilder(),
-        mail_to=config.mail_to,
+        mailer=mailer,
+        mail_to=config.mail_to if mailer is not None else None,
+        notifier=notifier,
         llm_concurrency=config.llm_concurrency,
     )
     try:

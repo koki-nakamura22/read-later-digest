@@ -92,14 +92,64 @@ class TestListUnreadSinglePage:
 
         await repo.list_unread()
 
-        assert len(client.databases.calls) == 1
-        first_call = client.databases.calls[0]
-        assert first_call["database_id"] == "db-1"
+        assert len(client.data_sources.calls) == 1
+        first_call = client.data_sources.calls[0]
+        assert first_call["data_source_id"] == "ds-1"
         assert first_call["filter"] == {
             "property": "Status",
             "select": {"equals": "未読"},
         }
         assert "start_cursor" not in first_call
+
+
+class TestDataSourceIdResolution:
+    """Notion 3.x: query takes data_source_id, resolved once via databases.retrieve."""
+
+    async def test_resolves_data_source_id_via_databases_retrieve(
+        self, load_fixture: Any, make_fake_client: Any
+    ) -> None:
+        client = make_fake_client([load_fixture("empty.json")])
+        repo = _build_repo(client)
+
+        await repo.list_unread()
+
+        # Exactly one retrieve call, with the configured database_id.
+        assert len(client.databases.retrieve_calls) == 1
+        assert client.databases.retrieve_calls[0]["database_id"] == "db-1"
+
+    async def test_caches_data_source_id_across_repeated_list_calls(
+        self, load_fixture: Any, make_fake_client: Any
+    ) -> None:
+        # Two consecutive list_unread() invocations must hit databases.retrieve once;
+        # the resolved data_source_id is cached on the repo for its lifetime.
+        client = make_fake_client([load_fixture("empty.json"), load_fixture("empty.json")])
+        repo = _build_repo(client)
+
+        await repo.list_unread()
+        await repo.list_unread()
+
+        assert len(client.databases.retrieve_calls) == 1
+        assert len(client.data_sources.calls) == 2
+
+    async def test_raises_when_database_has_no_data_sources(self) -> None:
+        from tests.conftest import (
+            FakeDataSourcesAPI,
+            FakeNotionClient,
+        )
+
+        class _EmptyDatabasesAPI:
+            def __init__(self) -> None:
+                self.retrieve_calls: list[dict[str, Any]] = []
+
+            def retrieve(self, **kwargs: Any) -> dict[str, Any]:
+                self.retrieve_calls.append(kwargs)
+                return {"data_sources": []}
+
+        client = FakeNotionClient(FakeDataSourcesAPI([]), databases=_EmptyDatabasesAPI())  # type: ignore[arg-type]
+        repo = _build_repo(client)
+
+        with pytest.raises(NotionError, match="data_sources"):
+            await repo.list_unread()
 
 
 class TestListUnreadPagination:
@@ -130,9 +180,9 @@ class TestListUnreadPagination:
 
         await repo.list_unread()
 
-        assert len(client.databases.calls) == 2
-        assert "start_cursor" not in client.databases.calls[0]
-        assert client.databases.calls[1]["start_cursor"] == "cursor-2"
+        assert len(client.data_sources.calls) == 2
+        assert "start_cursor" not in client.data_sources.calls[0]
+        assert client.data_sources.calls[1]["start_cursor"] == "cursor-2"
 
 
 class TestListUnreadEmpty:
@@ -145,7 +195,7 @@ class TestListUnreadEmpty:
         articles = await repo.list_unread()
 
         assert articles == []
-        assert len(client.databases.calls) == 1
+        assert len(client.data_sources.calls) == 1
 
 
 class TestListUnreadConfigurableStatusValue:
@@ -157,7 +207,7 @@ class TestListUnreadConfigurableStatusValue:
 
         await repo.list_unread()
 
-        assert client.databases.calls[0]["filter"] == {
+        assert client.data_sources.calls[0]["filter"] == {
             "property": "Status",
             "select": {"equals": "読了待ち"},
         }
@@ -170,7 +220,7 @@ class TestListUnreadConfigurableStatusValue:
 
         await repo.list_unread()
 
-        assert client.databases.calls[0]["filter"] == {
+        assert client.data_sources.calls[0]["filter"] == {
             "property": "読書状態",
             "select": {"equals": "未読"},
         }
@@ -187,7 +237,7 @@ class TestListUnreadRetry:
         articles = await repo.list_unread()
 
         assert articles == []
-        assert len(client.databases.calls) == 2
+        assert len(client.data_sources.calls) == 2
 
     async def test_succeeds_when_last_allowed_retry_finally_returns(
         self, load_fixture: Any, make_fake_client: Any, no_sleep: None
@@ -208,7 +258,7 @@ class TestListUnreadRetry:
         articles = await repo.list_unread()
 
         assert articles == []
-        assert len(client.databases.calls) == 4
+        assert len(client.data_sources.calls) == 4
 
     async def test_raises_notion_error_when_retries_exhausted(
         self, make_fake_client: Any, no_sleep: None
@@ -226,7 +276,7 @@ class TestListUnreadRetry:
 
         with pytest.raises(NotionError):
             await repo.list_unread()
-        assert len(client.databases.calls) == 4
+        assert len(client.data_sources.calls) == 4
 
     async def test_non_rate_limit_error_is_wrapped_as_notion_error_without_retry(
         self, make_fake_client: Any
@@ -236,7 +286,7 @@ class TestListUnreadRetry:
 
         with pytest.raises(NotionError):
             await repo.list_unread()
-        assert len(client.databases.calls) == 1
+        assert len(client.data_sources.calls) == 1
 
 
 class TestListUnreadMissingProperties:
@@ -311,6 +361,27 @@ class TestListUnreadMissingProperties:
         articles = await repo.list_unread()
 
         assert articles[0].age_days is None
+
+    async def test_added_at_in_notion_created_time_property_form_is_parsed(
+        self, make_fake_client: Any
+    ) -> None:
+        # docs/functional-design.md specifies AddedAt as a Notion `created_time`
+        # property. Its API shape is {"created_time": "<iso>"} rather than the
+        # `date` shape {"date": {"start": "<iso>"}}. The adapter must accept
+        # both so users can keep their existing schema.
+        result = make_notion_page(page_id="ct-1")
+        result["properties"]["AddedAt"] = {
+            "type": "created_time",
+            "created_time": "2026-04-22T10:00:00.000Z",
+        }
+        page = make_query_response([result])
+        client = make_fake_client([page])
+        repo = _build_repo(client)
+
+        articles = await repo.list_unread()
+
+        assert len(articles) == 1
+        assert articles[0].added_at == datetime.fromisoformat("2026-04-22T10:00:00+00:00")
 
 
 class TestListUnreadClientSideSort:
@@ -471,16 +542,16 @@ class TestWriteSummary:
         from tests.conftest import (
             FakeBlocksAPI,
             FakeBlocksChildrenAPI,
-            FakeDatabasesAPI,
+            FakeDataSourcesAPI,
             FakeNotionClient,
             FakePagesAPI,
         )
 
         children = FakeBlocksChildrenAPI([{}])
         client = FakeNotionClient(
-            FakeDatabasesAPI([]),
-            FakePagesAPI([{}]),
-            FakeBlocksAPI(children),
+            FakeDataSourcesAPI([]),
+            pages=FakePagesAPI([{}]),
+            blocks=FakeBlocksAPI(children),
         )
         repo = _build_repo(client)
 
@@ -504,16 +575,16 @@ class TestWriteSummary:
         from tests.conftest import (
             FakeBlocksAPI,
             FakeBlocksChildrenAPI,
-            FakeDatabasesAPI,
+            FakeDataSourcesAPI,
             FakeNotionClient,
             FakePagesAPI,
         )
 
         children = FakeBlocksChildrenAPI([{}])
         client = FakeNotionClient(
-            FakeDatabasesAPI([]),
-            FakePagesAPI(),
-            FakeBlocksAPI(children),
+            FakeDataSourcesAPI([]),
+            pages=FakePagesAPI(),
+            blocks=FakeBlocksAPI(children),
         )
         repo = _build_repo(client)
 
@@ -528,16 +599,16 @@ class TestWriteFailure:
         from tests.conftest import (
             FakeBlocksAPI,
             FakeBlocksChildrenAPI,
-            FakeDatabasesAPI,
+            FakeDataSourcesAPI,
             FakeNotionClient,
             FakePagesAPI,
         )
 
         children = FakeBlocksChildrenAPI([{}])
         client = FakeNotionClient(
-            FakeDatabasesAPI([]),
-            FakePagesAPI(),
-            FakeBlocksAPI(children),
+            FakeDataSourcesAPI([]),
+            pages=FakePagesAPI(),
+            blocks=FakeBlocksAPI(children),
         )
         repo = _build_repo(client)
 

@@ -29,6 +29,9 @@ ENV_FILE = ROOT / ".env"
 
 PARAM_TO_ENV: dict[str, str] = {
     "NotionDbId": "NOTION_DB_ID",
+    "NotionToken": "NOTION_TOKEN",
+    "AnthropicApiKey": "ANTHROPIC_API_KEY",
+    "SlackWebhookUrl": "SLACK_WEBHOOK_URL",
     "NotionStatusUnread": "NOTION_STATUS_UNREAD",
     "NotionStatusProcessed": "NOTION_STATUS_PROCESSED",
     "MailFrom": "MAIL_FROM",
@@ -99,8 +102,14 @@ def main() -> int:
 
     env: dict[str, str] = {}
     for param_name, value in collect_overrides(data).items():
-        if param_name in PARAM_TO_ENV:
-            env[PARAM_TO_ENV[param_name]] = value
+        if param_name not in PARAM_TO_ENV:
+            continue
+        # Empty values (e.g. SlackWebhookUrl="" when slack channel is disabled)
+        # must stay out of .env so config.py's `os.environ.get(...) or None`
+        # treats them as unset rather than seeing an empty string.
+        if value == "":
+            continue
+        env[PARAM_TO_ENV[param_name]] = value
 
     local = data.get("local", {})
     if not isinstance(local, dict):

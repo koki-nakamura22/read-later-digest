@@ -12,22 +12,21 @@ version = 0.1
 #
 # 構成:
 #   - [default.deploy.parameters].parameter_overrides
-#       非機密設定の SoT。template.yaml の Parameters と PascalCase で対応。
+#       Lambda へ渡す全 env の SoT。template.yaml の Parameters と
+#       PascalCase で対応する。機密値 (NotionToken / AnthropicApiKey /
+#       SlackWebhookUrl) もここに直書きする。template.yaml 側で
+#       NoEcho: true 指定のため、CloudFormation コンソールや
+#       describe-stacks 出力ではマスクされる。
 #       sam deploy では CloudFormation 経由で Lambda env として注入され、
 #       ローカルでは scripts/gen-env.py が UPPER_SNAKE に変換して
 #       .env に展開する (両環境で同じ env キー名・意味になる)。
 #   - [local]
-#       「Lambda runtime がビルトインで提供する値 (AWS_REGION)」と
-#       「Lambda では Secrets Manager / SSM 経由で注入される機密」のみ。
-#       これらはローカル限定で .env に書き出されるが、Lambda の
-#       Environment.Variables には載せない。
+#       Lambda へは流れない、ローカル限定の値のみ。
+#       Lambda runtime がビルトインで提供する AWS_REGION や、
+#       開発時のみ使う任意上書きを置く。
 #
 # `samconfig.toml` 自体は .gitignore 済み。値変更後は以下で `.env` を再生成:
 #     uv run python scripts/gen-env.py
-#
-# TODO: リポジトリ共有 / CI 導入 / prod 環境分離のいずれかが
-#       発生したタイミングで、機密値を AWS Secrets Manager
-#       (template.yaml の SECRETS_PREFIX 経由) に移行する。
 # ------------------------------------------------------------
 
 [default.global.parameters]
@@ -45,8 +44,14 @@ resolve_s3 = true
 # template.yaml の Parameters と対応 (PascalCase)。
 # scripts/gen-env.py が UPPER_SNAKE に変換して .env にも展開する。
 # ここの値が「ローカル + Lambda」両方の env の SoT。
+# 機密値 (NotionToken / AnthropicApiKey / SlackWebhookUrl) は
+# template.yaml で NoEcho: true なので CFn 側ではマスクされる。
 parameter_overrides = [
     "NotionDbId=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "NotionToken=secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "AnthropicApiKey=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    # Slack 通知を使わないなら空のままでよい (NotifyChannels に "slack" を含めない限り未使用)。
+    "SlackWebhookUrl=",
     "NotionStatusUnread=未読",
     "NotionStatusProcessed=処理済み",
     "MailFrom=digest@example.com",
@@ -67,18 +72,13 @@ parameter_overrides = [
 # ------------------------------------------------------------
 # [local] — ローカル限定の env (Lambda の Environment.Variables には載らない)
 #
-# 1. AWS_REGION:
-#    Lambda runtime はこの値をビルトインで提供するため、template.yaml
-#    の Environment.Variables には宣言しない。ローカル (uv run / boto3
-#    クライアント生成時) では明示が必要なのでここに置く。
-# 2. 機密 (NOTION_TOKEN / ANTHROPIC_API_KEY / SLACK_WEBHOOK_URL):
-#    Lambda 実行時は Secrets Manager / SSM (template.yaml: SECRETS_PREFIX)
-#    経由で注入される想定。ローカルでは .env 経由で渡すためここに置く。
+# AWS_REGION: Lambda runtime はこの値をビルトインで提供するため、
+#   template.yaml の Environment.Variables には宣言しない。
+#   ローカル (uv run / boto3 クライアント生成時) では明示が必要なのでここに置く。
+#
+# 機密値 (NOTION_TOKEN / ANTHROPIC_API_KEY / SLACK_WEBHOOK_URL) は
+# parameter_overrides 側へ移動した。Lambda にも同じ値が CloudFormation
+# Parameter 経由で流れる。
 # ------------------------------------------------------------
 [local]
 AWS_REGION = "ap-northeast-1"
-NOTION_TOKEN = "secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-ANTHROPIC_API_KEY = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-
-# Slack 通知を有効にする場合 (parameter_overrides の NotifyChannels に "slack" を含める)
-# SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/xxx/yyy/zzz"

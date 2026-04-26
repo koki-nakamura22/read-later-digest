@@ -25,7 +25,7 @@ def test_lambda_handler_runs_orchestrator_and_returns_summary(
         total_articles=2,
         succeeded=1,
         failed=1,
-        mail_sent=True,
+        notification_sent=True,
         status_updated=1,
         duration_ms=42,
     )
@@ -41,7 +41,7 @@ def test_lambda_handler_runs_orchestrator_and_returns_summary(
         "total_articles": 2,
         "succeeded": 1,
         "failed": 1,
-        "mail_sent": True,
+        "notification_sent": True,
         "status_updated": 1,
         "duration_ms": 42,
     }

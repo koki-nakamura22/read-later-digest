@@ -122,6 +122,9 @@ class TestCollectOverrides:
 # UPPER_SNAKE env-var name as the Lambda Environment.Variables block.
 EXPECTED_MAPPINGS = {
     "NotionDbId": "NOTION_DB_ID",
+    "NotionToken": "NOTION_TOKEN",
+    "AnthropicApiKey": "ANTHROPIC_API_KEY",
+    "SlackWebhookUrl": "SLACK_WEBHOOK_URL",
     "NotionStatusUnread": "NOTION_STATUS_UNREAD",
     "NotionStatusProcessed": "NOTION_STATUS_PROCESSED",
     "MailFrom": "MAIL_FROM",
@@ -179,3 +182,111 @@ class TestQuote:
         self, gen_env: ModuleType, value: str, expected: str
     ) -> None:
         assert gen_env.quote(value) == expected
+
+
+# ---------------------------------------------------------------------------
+# main() — integration: samconfig.toml -> .env
+# ---------------------------------------------------------------------------
+
+
+SAMPLE_SAMCONFIG = """\
+version = 0.1
+
+[default.deploy.parameters]
+parameter_overrides = [
+    "NotionDbId=db123",
+    "NotionToken=secret_abc",
+    "AnthropicApiKey=sk-ant-zzz",
+    "SlackWebhookUrl=",
+    "MailFrom=from@example.com",
+    "MailTo=to@example.com",
+    "NotifyChannels=mail",
+    "NotionStatusUnread=未読",
+    "NotionStatusProcessed=処理済み",
+    "NotionStatusProperty=Status",
+    "NotionTypeProperty=Type",
+    "NotionPriorityProperty=Priority",
+    "LlmModel=claude-sonnet-4-6",
+    "LlmConcurrency=5",
+    "LlmBodyMaxChars=30000",
+    "LlmMaxRateLimitRetries=3",
+    "LlmInitialBackoffSec=1.0",
+    "FetchTimeoutSec=15.0",
+    "SlackTimeoutSec=10.0",
+    "LambdaTimeoutSeconds=600",
+]
+
+[local]
+AWS_REGION = "ap-northeast-1"
+"""
+
+
+def _parse_dotenv(text: str) -> dict[str, str]:
+    """Tiny .env parser sufficient for asserting on gen-env.py output."""
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if value.startswith('"') and value.endswith('"'):
+            value = value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+        out[key] = value
+    return out
+
+
+class TestMainIntegration:
+    """Drive main() against an isolated samconfig.toml and inspect the .env."""
+
+    def _run(self, gen_env: ModuleType, tmp_path: Path) -> dict[str, str]:
+        sam = tmp_path / "samconfig.toml"
+        env_file = tmp_path / ".env"
+        sam.write_text(SAMPLE_SAMCONFIG, encoding="utf-8")
+
+        # main() reads module-level SAMCONFIG / ENV_FILE / ROOT — redirect all.
+        # ROOT is used by main() for a cosmetic relative_to() in its log line,
+        # so it must contain the env_file path or the call raises.
+        original_root = gen_env.ROOT
+        original_sam = gen_env.SAMCONFIG
+        original_env = gen_env.ENV_FILE
+        gen_env.ROOT = tmp_path
+        gen_env.SAMCONFIG = sam
+        gen_env.ENV_FILE = env_file
+        try:
+            rc = gen_env.main()
+        finally:
+            gen_env.ROOT = original_root
+            gen_env.SAMCONFIG = original_sam
+            gen_env.ENV_FILE = original_env
+        assert rc == 0
+        return _parse_dotenv(env_file.read_text(encoding="utf-8"))
+
+    def test_secrets_emitted_in_upper_snake(self, gen_env: ModuleType, tmp_path: Path) -> None:
+        env = self._run(gen_env, tmp_path)
+        assert env["NOTION_TOKEN"] == "secret_abc"
+        assert env["ANTHROPIC_API_KEY"] == "sk-ant-zzz"
+
+    def test_empty_value_param_is_skipped(self, gen_env: ModuleType, tmp_path: Path) -> None:
+        # SlackWebhookUrl="" must NOT produce SLACK_WEBHOOK_URL= in .env, so
+        # config.py's `os.environ.get(...) or None` treats it as unset rather
+        # than as an empty string (which would pass the "set" check).
+        env = self._run(gen_env, tmp_path)
+        assert "SLACK_WEBHOOK_URL" not in env
+
+    def test_local_section_is_merged(self, gen_env: ModuleType, tmp_path: Path) -> None:
+        env = self._run(gen_env, tmp_path)
+        assert env["AWS_REGION"] == "ap-northeast-1"
+
+    def test_unmapped_parameter_is_omitted(self, gen_env: ModuleType, tmp_path: Path) -> None:
+        # LambdaTimeoutSeconds is not in PARAM_TO_ENV (it shapes the stack,
+        # not the runtime). It must not bleed into .env as a stray var.
+        env = self._run(gen_env, tmp_path)
+        assert "LAMBDA_TIMEOUT_SECONDS" not in env
+        assert "LambdaTimeoutSeconds" not in env
+
+    def test_mapped_non_secret_value_round_trips(self, gen_env: ModuleType, tmp_path: Path) -> None:
+        env = self._run(gen_env, tmp_path)
+        assert env["NOTION_DB_ID"] == "db123"
+        assert env["MAIL_FROM"] == "from@example.com"
+        assert env["NOTIFY_CHANNELS"] == "mail"

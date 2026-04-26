@@ -14,7 +14,7 @@ from read_later_digest.domain.models import (
     NotionArticle,
     Priority,
 )
-from read_later_digest.exceptions import LLMError, MailerError, NotionError
+from read_later_digest.exceptions import LLMError, MailerError, NotifierError, NotionError
 from read_later_digest.orchestrator import Orchestrator
 
 # ---------- Test doubles ----------
@@ -55,6 +55,17 @@ class _FakeMailer:
         self.calls.append({"to": to, "subject": subject})
         if self.raise_error:
             raise MailerError("ses send failed")
+
+
+class _FakeNotifier:
+    def __init__(self, raise_error: bool = False) -> None:
+        self.raise_error = raise_error
+        self.calls: list[dict[str, Any]] = []
+
+    async def send(self, *, subject: str, text: str) -> None:
+        self.calls.append({"subject": subject, "text": text})
+        if self.raise_error:
+            raise NotifierError("slack webhook failed")
 
 
 class _FakeNotion:
@@ -137,16 +148,18 @@ def _build_orchestrator(
     notion: _FakeNotion,
     fetcher: _FakeFetcher,
     llm: _FakeLLM,
-    mailer: _FakeMailer,
+    mailer: _FakeMailer | None = None,
+    notifier: _FakeNotifier | None = None,
     llm_concurrency: int = 5,
 ) -> Orchestrator:
     return Orchestrator(
         notion=notion,
         fetcher=fetcher,
         llm=llm,
-        mailer=mailer,
         digest_builder=DigestBuilder(),
-        mail_to=["me@example.com"],
+        mailer=mailer,
+        mail_to=["me@example.com"] if mailer is not None else None,
+        notifier=notifier,
         llm_concurrency=llm_concurrency,
         clock=_FixedClock("2026-04-26T07:00:00+09:00"),
     )
@@ -170,7 +183,7 @@ async def test_run_zero_articles_sends_empty_digest_and_returns_zero_counts() ->
     assert result.total_articles == 0
     assert result.succeeded == 0
     assert result.failed == 0
-    assert result.mail_sent is True
+    assert result.notification_sent is True
     assert result.status_updated == 0
     assert len(mailer.calls) == 1, "0-article runs still send a digest mail"
     assert notion.summary_writes == []
@@ -190,7 +203,7 @@ async def test_run_all_succeeded_writes_summary_and_marks_processed() -> None:
 
     assert result.succeeded == 2
     assert result.failed == 0
-    assert result.mail_sent is True
+    assert result.notification_sent is True
     assert result.status_updated == 2
     assert {pid for pid, _ in notion.summary_writes} == {"p1", "p2"}
     assert set(notion.marked) == {"p1", "p2"}
@@ -250,7 +263,7 @@ async def test_run_dry_run_skips_send_and_writeback() -> None:
     orch = _build_orchestrator(notion=notion, fetcher=fetcher, llm=llm, mailer=mailer)
     result = await orch.run(dry_run=True)
 
-    assert result.mail_sent is False
+    assert result.notification_sent is False
     assert result.status_updated == 0
     assert mailer.calls == []
     assert notion.marked == []
@@ -303,3 +316,104 @@ async def test_digest_builder_output_used_for_mailer_arguments() -> None:
     sent = mailer.calls[0]
     assert sent["to"] == ["me@example.com"]
     assert isinstance(sent["subject"], str) and sent["subject"]
+
+
+# ---------- Multi-channel notification routing ----------
+
+
+async def test_run_slack_only_sends_via_notifier_and_writes_back() -> None:
+    a1 = _article("p1", title="A1")
+    notion = _FakeNotion(articles=[a1])
+    fetcher = _FakeFetcher({a1.url: _ok_fetch()})
+    llm = _FakeLLM({"A1": _summary()})
+    notifier = _FakeNotifier()
+
+    orch = _build_orchestrator(notion=notion, fetcher=fetcher, llm=llm, notifier=notifier)
+    result = await orch.run()
+
+    assert result.notification_sent is True
+    assert result.status_updated == 1
+    assert len(notifier.calls) == 1
+    sent = notifier.calls[0]
+    assert sent["subject"]
+    assert sent["text"]
+
+
+async def test_run_mail_and_slack_both_receive_the_digest() -> None:
+    a1 = _article("p1", title="A1")
+    notion = _FakeNotion(articles=[a1])
+    fetcher = _FakeFetcher({a1.url: _ok_fetch()})
+    llm = _FakeLLM({"A1": _summary()})
+    mailer = _FakeMailer()
+    notifier = _FakeNotifier()
+
+    orch = _build_orchestrator(
+        notion=notion, fetcher=fetcher, llm=llm, mailer=mailer, notifier=notifier
+    )
+    result = await orch.run()
+
+    assert result.notification_sent is True
+    assert len(mailer.calls) == 1
+    assert len(notifier.calls) == 1
+    # Both channels saw the same subject (rendered once and fanned out).
+    assert mailer.calls[0]["subject"] == notifier.calls[0]["subject"]
+
+
+async def test_run_notifier_failure_aborts_before_writeback() -> None:
+    # Slack-only path: a NotifierError must abort the batch identically to a
+    # MailerError, so writeback never runs and Notion stays untouched.
+    a1 = _article("p1", title="A1")
+    notion = _FakeNotion(articles=[a1])
+    fetcher = _FakeFetcher({a1.url: _ok_fetch()})
+    llm = _FakeLLM({"A1": _summary()})
+    notifier = _FakeNotifier(raise_error=True)
+
+    orch = _build_orchestrator(notion=notion, fetcher=fetcher, llm=llm, notifier=notifier)
+
+    with pytest.raises(NotifierError):
+        await orch.run()
+    assert notion.summary_writes == []
+    assert notion.marked == []
+
+
+async def test_run_mail_succeeds_then_slack_fails_aborts_before_writeback() -> None:
+    # Failure semantics for the dual-channel path: even after mail succeeds, a
+    # subsequent slack failure must skip writeback so the next run can retry.
+    a1 = _article("p1", title="A1")
+    notion = _FakeNotion(articles=[a1])
+    fetcher = _FakeFetcher({a1.url: _ok_fetch()})
+    llm = _FakeLLM({"A1": _summary()})
+    mailer = _FakeMailer()
+    notifier = _FakeNotifier(raise_error=True)
+
+    orch = _build_orchestrator(
+        notion=notion, fetcher=fetcher, llm=llm, mailer=mailer, notifier=notifier
+    )
+
+    with pytest.raises(NotifierError):
+        await orch.run()
+    assert len(mailer.calls) == 1, "mail was sent before slack failed"
+    assert notion.summary_writes == []
+    assert notion.marked == []
+
+
+def test_orchestrator_rejects_construction_without_any_channel() -> None:
+    with pytest.raises(ValueError, match="at least one of mailer or notifier"):
+        Orchestrator(
+            notion=_FakeNotion(articles=[]),
+            fetcher=_FakeFetcher({}),
+            llm=_FakeLLM({}),
+            digest_builder=DigestBuilder(),
+        )
+
+
+def test_orchestrator_rejects_mailer_without_mail_to() -> None:
+    with pytest.raises(ValueError, match="mail_to is required"):
+        Orchestrator(
+            notion=_FakeNotion(articles=[]),
+            fetcher=_FakeFetcher({}),
+            llm=_FakeLLM({}),
+            digest_builder=DigestBuilder(),
+            mailer=_FakeMailer(),
+            mail_to=None,
+        )

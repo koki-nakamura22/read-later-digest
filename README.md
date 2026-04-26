@@ -46,18 +46,59 @@ uv run python -m read_later_digest.run --dry-run
 
 `samconfig.toml`(git 管理外、`samconfig.toml.tmpl` から `cp` で作成)が真実の出所。以下の2系統から成る:
 
-1. `[default.deploy.parameters].parameter_overrides` — `template.yaml` の Parameters (PascalCase) と対応。`sam deploy` がそのまま使う。`scripts/gen-env.py` が `NotionDbId` → `NOTION_DB_ID` のように変換して `.env` にも展開する。
-2. `[local]` — ローカル実行 (`uv run`) でのみ必要な env (UPPER_SNAKE)。機密 (`NOTION_TOKEN`, `ANTHROPIC_API_KEY`, `SLACK_WEBHOOK_URL`) もここに置く。Lambda には流れない。
+1. `[default.deploy.parameters].parameter_overrides` — `template.yaml` の Parameters (PascalCase) と対応。`sam deploy` がそのまま使い、`scripts/gen-env.py` が `NotionDbId` → `NOTION_DB_ID` のように変換して `.env` にも展開する。**機密 (`NotionToken` / `AnthropicApiKey` / `SlackWebhookUrl`) もここに直書きする**。`template.yaml` 側で `NoEcho: true` 指定のため CloudFormation コンソールや `describe-stacks` 出力ではマスクされる。
+2. `[local]` — Lambda には流れない、ローカル限定の env (UPPER_SNAKE)。Lambda runtime がビルトインで提供する `AWS_REGION` などのみ。
 
 全 env のデフォルト値・型は `src/read_later_digest/config.py` を参照。
 
-> **TODO**: 機密値は当面 `samconfig.toml` で管理しているが、リポジトリ共有 / CI 導入 / prod 環境分離のいずれかが発生したタイミングで AWS Secrets Manager (template.yaml の `SECRETS_PREFIX` 経由) に移行する。
+> **将来検討**: リポジトリ共有 / CI 導入 / prod 環境分離が発生したタイミングで、機密の保管先を AWS Secrets Manager に移行することを検討する。それまでは個人利用前提で `samconfig.toml`(.gitignore 済み)+ `NoEcho` パラメータの組み合わせで運用する。
 
 ## デプロイ (AWS Lambda + EventBridge)
 
 `template.yaml` で Lambda 関数 / EventBridge 日次スケジュール / IAM ロール / CloudWatch Logs を宣言している。`samconfig.toml` の `parameter_overrides` を読むため、コマンドラインでの override は不要。
 
+### 前提
+
+- AWS CLI / SAM CLI / uv がインストール済み
+- `aws sts get-caller-identity` が成功する状態(認証情報が設定済み)
+- `samconfig.toml` を作成済み(`cp samconfig.toml.tmpl samconfig.toml` 後、自分の値に編集)
+
+### 一発デプロイ(推奨)
+
+`scripts/deploy.sh` が以下を 1 コマンドにまとめてある:
+
+1. 前提チェック(`samconfig.toml` / 必要 CLI / AWS 認証)
+2. `src/requirements.txt` を `uv.lock` から再生成(`sam build` がこれを使う)
+3. Linux 側の `python3.13` を解決して PATH に通す(WSL で Windows pyenv shims が混入する環境を吸収)
+4. `sam build`
+5. `sam deploy`(追加引数はそのまま `sam deploy` に転送される)
+
 ```bash
+# 対話あり(変更セットを確認してから適用)
+scripts/deploy.sh
+
+# 非対話(CI など。samconfig.toml の confirm_changeset を上書き)
+scripts/deploy.sh --no-confirm-changeset
+```
+
+### 動作確認(任意)
+
+スケジュールを待たずに 1 回実行する場合:
+
+```bash
+aws lambda invoke --function-name read-later-digest --region ap-northeast-1 \
+    --cli-binary-format raw-in-base64-out --payload '{}' /tmp/out.json && cat /tmp/out.json
+
+# ログ追跡
+sam logs --stack-name read-later-digest --tail
+```
+
+### 個別コマンドで実行する場合
+
+スクリプトを使わずに手動で進める場合は同等のコマンドを順に:
+
+```bash
+uv run python scripts/sync-requirements.py
 sam build
 sam deploy
 ```
