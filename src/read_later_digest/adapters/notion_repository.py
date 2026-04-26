@@ -14,6 +14,12 @@ from read_later_digest.logging_setup import logger
 class NotionDatabasesAPI(Protocol):
     """Subset of `notion_client.Client.databases` used by `NotionRepository`."""
 
+    def retrieve(self, **kwargs: Any) -> dict[str, Any]: ...
+
+
+class NotionDataSourcesAPI(Protocol):
+    """Subset of `notion_client.Client.data_sources` used by `NotionRepository`."""
+
     def query(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
@@ -41,6 +47,9 @@ class NotionClientLike(Protocol):
 
     @property
     def databases(self) -> NotionDatabasesAPI: ...
+
+    @property
+    def data_sources(self) -> NotionDataSourcesAPI: ...
 
     @property
     def pages(self) -> NotionPagesAPI: ...
@@ -74,6 +83,10 @@ class NotionRepository:
         self._priority_property = priority_property
         self._max_retries = max_retries
         self._initial_backoff_sec = initial_backoff_sec
+        # Lazily resolved on first list_unread(); cached for the repo's lifetime.
+        # Notion 3.x split DB into "data sources" — query takes a data_source_id,
+        # which we get by calling databases.retrieve once.
+        self._data_source_id: str | None = None
 
     async def list_unread(self) -> list[NotionArticle]:
         """Return all pages whose Status equals the configured unread value.
@@ -81,10 +94,13 @@ class NotionRepository:
         Pages without a usable URL or AddedAt are skipped with a warning.
         Results are sorted by added_at ascending, then by page_id ascending.
         """
+        data_source_id = await self._get_data_source_id()
         articles: list[NotionArticle] = []
         cursor: str | None = None
         while True:
-            response = await self._query_with_retry(start_cursor=cursor)
+            response = await self._query_with_retry(
+                data_source_id=data_source_id, start_cursor=cursor
+            )
             articles.extend(self._parse_page(response))
             if not response.get("has_more"):
                 break
@@ -92,6 +108,24 @@ class NotionRepository:
             if cursor is None:
                 break
         return self._sort(articles)
+
+    async def _get_data_source_id(self) -> str:
+        if self._data_source_id is not None:
+            return self._data_source_id
+        db = await asyncio.to_thread(self._client.databases.retrieve, database_id=self._db_id)
+        sources = db.get("data_sources") or []
+        if not sources or not isinstance(sources, list):
+            raise NotionError(
+                f"notion database {self._db_id!r} has no data_sources; "
+                "the integration may not have access to this database"
+            )
+        ds_id = sources[0].get("id") if isinstance(sources[0], dict) else None
+        if not isinstance(ds_id, str) or not ds_id:
+            raise NotionError(
+                f"notion database {self._db_id!r} returned an invalid data_source entry"
+            )
+        self._data_source_id = ds_id
+        return ds_id
 
     async def mark_processed(self, page_id: str) -> None:
         """Update the page's Status property to the configured processed value."""
@@ -172,13 +206,16 @@ class NotionRepository:
                 raise NotionError(f"notion api error (status={e.status}): {e}") from e
         raise NotionError(f"notion api retries exhausted: {last_error}") from last_error
 
-    async def _query_with_retry(self, *, start_cursor: str | None) -> dict[str, Any]:
+    async def _query_with_retry(
+        self, *, data_source_id: str, start_cursor: str | None
+    ) -> dict[str, Any]:
         delay = self._initial_backoff_sec
         last_error: APIResponseError | None = None
         for attempt in range(self._max_retries + 1):
             try:
                 return await asyncio.to_thread(
-                    self._client.databases.query, **self._build_query(start_cursor)
+                    self._client.data_sources.query,
+                    **self._build_query(data_source_id, start_cursor),
                 )
             except APIResponseError as e:
                 last_error = e
@@ -193,9 +230,9 @@ class NotionRepository:
                 raise NotionError(f"notion api error (status={e.status}): {e}") from e
         raise NotionError(f"notion api retries exhausted: {last_error}") from last_error
 
-    def _build_query(self, start_cursor: str | None) -> dict[str, Any]:
+    def _build_query(self, data_source_id: str, start_cursor: str | None) -> dict[str, Any]:
         query: dict[str, Any] = {
-            "database_id": self._db_id,
+            "data_source_id": data_source_id,
             "filter": {
                 "property": self._status_property,
                 "select": {"equals": self._status_unread},
