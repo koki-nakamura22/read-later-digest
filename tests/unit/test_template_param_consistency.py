@@ -69,7 +69,16 @@ EXPECTED: list[tuple[str, str | None, Any]] = [
     ("NotionStatusUnread", "notion_status_unread", str),
     ("NotionStatusProcessed", "notion_status_processed", str),
     ("NotifyChannels", None, str),  # not a single Config attr; checked separately
-    ("NotifyGranularity", None, str),  # parsed via _parse_notify_granularity; checked separately
+    (
+        "NotifyGranularityMail",
+        None,
+        str,
+    ),  # parsed via _parse_notify_granularity; checked separately
+    (
+        "NotifyGranularitySlack",
+        None,
+        str,
+    ),  # parsed via _parse_notify_granularity; checked separately
     ("NotionStatusProperty", "notion_status_property", str),
     ("NotionTypeProperty", "notion_type_property", str),
     ("NotionPriorityProperty", "notion_priority_property", str),
@@ -133,13 +142,17 @@ class TestTemplateParameterDefaults:
         # We only assert template.yaml stays "mail" so Lambda matches local.
         assert template_defaults["NotifyChannels"] == "mail"
 
-    def test_notify_granularity_default_is_digest(self, template_defaults: dict[str, str]) -> None:
-        # NotifyGranularity is parsed by _parse_notify_granularity, but its
-        # template.yaml default and Config field default must agree on "digest"
-        # so the legacy single-message behavior keeps applying without action.
+    def test_per_channel_notify_granularity_defaults_are_digest(
+        self, template_defaults: dict[str, str]
+    ) -> None:
+        # Both per-channel granularity Parameters must default to "digest" so
+        # the legacy single-message behavior keeps applying without action.
+        # Drift here would silently change every existing deployment's
+        # notification volume on the next sam deploy.
         from read_later_digest.config import NotifyGranularity
 
-        assert template_defaults["NotifyGranularity"] == "digest"
+        assert template_defaults["NotifyGranularityMail"] == "digest"
+        assert template_defaults["NotifyGranularitySlack"] == "digest"
         assert NotifyGranularity.DIGEST.value == "digest"
 
 

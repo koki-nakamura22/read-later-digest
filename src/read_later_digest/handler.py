@@ -88,7 +88,8 @@ async def _run(config: Config) -> RunResult:
         mailer=mailer,
         mail_to=config.mail_to if mailer is not None else None,
         notifier=notifier,
-        notify_granularity=config.notify_granularity,
+        mail_granularity=config.notify_granularity_mail,
+        notifier_granularity=config.notify_granularity_slack,
         llm_concurrency=config.llm_concurrency,
     )
     try:

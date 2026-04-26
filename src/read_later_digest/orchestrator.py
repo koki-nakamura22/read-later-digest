@@ -61,7 +61,8 @@ class Orchestrator:
         mailer: Mailer | None = None,
         mail_to: list[str] | None = None,
         notifier: Notifier | None = None,
-        notify_granularity: NotifyGranularity = NotifyGranularity.DIGEST,
+        mail_granularity: NotifyGranularity = NotifyGranularity.DIGEST,
+        notifier_granularity: NotifyGranularity = NotifyGranularity.DIGEST,
         llm_concurrency: int = 5,
         clock: Clock | None = None,
     ) -> None:
@@ -76,7 +77,8 @@ class Orchestrator:
         self._notifier = notifier
         self._digest_builder = digest_builder
         self._mail_to = mail_to or []
-        self._notify_granularity = notify_granularity
+        self._mail_granularity = mail_granularity
+        self._notifier_granularity = notifier_granularity
         self._sem = asyncio.Semaphore(max(1, llm_concurrency))
         self._clock = clock or _RealClock()
 
@@ -91,9 +93,7 @@ class Orchestrator:
         succeeded = [p for p in processed if p.status is ProcessStatus.SUCCESS]
         failed = [p for p in processed if p.status is not ProcessStatus.SUCCESS]
 
-        renderings = self._render(target_date, succeeded, failed)
-
-        notification_sent = await self._send_all(renderings, dry_run=dry_run)
+        notification_sent = await self._send_all(target_date, succeeded, failed, dry_run=dry_run)
         if not notification_sent:
             return self._make_result(articles, succeeded, failed, notification_sent, 0, started)
 
@@ -107,8 +107,9 @@ class Orchestrator:
         target_date: str,
         succeeded: list[ProcessedArticle],
         failed: list[ProcessedArticle],
+        granularity: NotifyGranularity,
     ) -> list[RenderedDigest]:
-        """Build the list of messages to fan out per the configured granularity.
+        """Build the list of messages to fan out for one channel's granularity.
 
         digest mode: always exactly one combined message (matches legacy behavior,
         including the empty-digest case where the run still sends one notification).
@@ -117,7 +118,7 @@ class Orchestrator:
         articles at all), still emit a single combined "empty digest" message so
         operators see a heartbeat — silence would be ambiguous with a broken job.
         """
-        if self._notify_granularity is NotifyGranularity.DIGEST:
+        if granularity is NotifyGranularity.DIGEST:
             digest = Digest(target_date=target_date, succeeded=succeeded, failed=failed)
             return [self._digest_builder.build(digest)]
 
@@ -179,59 +180,77 @@ class Orchestrator:
                 error_reason=None,
             )
 
-    async def _send_all(self, renderings: list[RenderedDigest], *, dry_run: bool) -> bool:
-        """Fan out every rendering to every configured channel, sequentially.
+    async def _send_all(
+        self,
+        target_date: str,
+        succeeded: list[ProcessedArticle],
+        failed: list[ProcessedArticle],
+        *,
+        dry_run: bool,
+    ) -> bool:
+        """Render and fan out per channel, each at its own granularity.
 
-        Sequential rather than concurrent is deliberate: SES and Slack webhook
-        rate limits are easy to trip with parallel fan-out, and a single failure
-        must abort the run before writeback so the next batch can retry. Mailer
-        runs before Notifier so per-channel failure ordering matches the legacy
-        single-message path expected by existing tests.
+        Each channel can have a different granularity (e.g. mail=digest while
+        slack=per_article), so each transport gets its own renderings list.
+        Mailer is processed before Notifier so the abort-then-skip-writeback
+        invariant matches the legacy single-channel path: if mail fails, the
+        slack send never happens; if any send raises, writeback never runs.
+        Sequential rather than concurrent is deliberate — SES and Slack webhook
+        rate limits are easy to trip with parallel fan-out.
         """
         if dry_run:
             logger.info(
                 "dry-run: skipping notification send",
-                extra={"count": len(renderings)},
+                extra={
+                    "mail_granularity": self._mail_granularity.value,
+                    "notifier_granularity": self._notifier_granularity.value,
+                },
             )
             return False
         sent_any = False
-        for rendered in renderings:
-            sent_any = await self._send_one(rendered) or sent_any
+        if self._mailer is not None:
+            renderings = self._render(target_date, succeeded, failed, self._mail_granularity)
+            for rendered in renderings:
+                await self._send_via_mailer(rendered)
+                sent_any = True
+        if self._notifier is not None:
+            renderings = self._render(target_date, succeeded, failed, self._notifier_granularity)
+            for rendered in renderings:
+                await self._send_via_notifier(rendered)
+                sent_any = True
         return sent_any
 
-    async def _send_one(self, rendered: RenderedDigest) -> bool:
-        sent_any = False
-        if self._mailer is not None:
-            try:
-                await self._mailer.send(
-                    to=self._mail_to,
-                    subject=rendered.subject,
-                    html=rendered.html,
-                    text=rendered.text,
-                )
-            except MailerError:
-                logger.exception("mail send failed; aborting batch")
-                raise
-            logger.info(
-                "mail sent",
-                extra={"subject": rendered.subject, "to_count": len(self._mail_to)},
+    async def _send_via_mailer(self, rendered: RenderedDigest) -> None:
+        assert self._mailer is not None
+        try:
+            await self._mailer.send(
+                to=self._mail_to,
+                subject=rendered.subject,
+                html=rendered.html,
+                text=rendered.text,
             )
-            sent_any = True
-        if self._notifier is not None:
-            try:
-                await self._notifier.send(
-                    subject=rendered.subject,
-                    text=rendered.text,
-                )
-            except NotifierError:
-                logger.exception("notifier send failed; aborting batch")
-                raise
-            logger.info(
-                "notifier sent",
-                extra={"subject": rendered.subject},
+        except MailerError:
+            logger.exception("mail send failed; aborting batch")
+            raise
+        logger.info(
+            "mail sent",
+            extra={"subject": rendered.subject, "to_count": len(self._mail_to)},
+        )
+
+    async def _send_via_notifier(self, rendered: RenderedDigest) -> None:
+        assert self._notifier is not None
+        try:
+            await self._notifier.send(
+                subject=rendered.subject,
+                text=rendered.text,
             )
-            sent_any = True
-        return sent_any
+        except NotifierError:
+            logger.exception("notifier send failed; aborting batch")
+            raise
+        logger.info(
+            "notifier sent",
+            extra={"subject": rendered.subject},
+        )
 
     async def _writeback(
         self,
