@@ -88,6 +88,7 @@ async def _run(config: Config) -> RunResult:
         mailer=mailer,
         mail_to=config.mail_to if mailer is not None else None,
         notifier=notifier,
+        notify_granularity=config.notify_granularity,
         llm_concurrency=config.llm_concurrency,
     )
     try:

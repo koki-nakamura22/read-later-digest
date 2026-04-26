@@ -53,6 +53,11 @@ Parameters:
     Type: String
     Default: 'mail'
     Description: Comma-separated notification channels (mail / slack).
+  NotifyGranularity:
+    Type: String
+    Default: 'digest'
+    AllowedValues: ['digest', 'per_article']
+    Description: Notification fan-out granularity (digest = one combined message; per_article = one message per successfully summarized article + one aggregated failure summary).
   NotionStatusProperty:
     Type: String
     Default: 'Status'
@@ -113,6 +118,7 @@ Resources:
           MAIL_FROM: !Ref MailFrom
           MAIL_TO: !Ref MailTo
           NOTIFY_CHANNELS: !Ref NotifyChannels
+          NOTIFY_GRANULARITY: !Ref NotifyGranularity
           NOTION_STATUS_PROPERTY: !Ref NotionStatusProperty
           NOTION_TYPE_PROPERTY: !Ref NotionTypeProperty
           NOTION_PRIORITY_PROPERTY: !Ref NotionPriorityProperty

@@ -37,6 +37,7 @@ PARAM_TO_ENV: dict[str, str] = {
     "MailFrom": "MAIL_FROM",
     "MailTo": "MAIL_TO",
     "NotifyChannels": "NOTIFY_CHANNELS",
+    "NotifyGranularity": "NOTIFY_GRANULARITY",
     "NotionStatusProperty": "NOTION_STATUS_PROPERTY",
     "NotionTypeProperty": "NOTION_TYPE_PROPERTY",
     "NotionPriorityProperty": "NOTION_PRIORITY_PROPERTY",

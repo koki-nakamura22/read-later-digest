@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from read_later_digest.config import NotifyGranularity
 from read_later_digest.domain.digest_builder import DigestBuilder
 from read_later_digest.domain.models import (
     ArticleSummary,
@@ -150,6 +151,7 @@ def _build_orchestrator(
     llm: _FakeLLM,
     mailer: _FakeMailer | None = None,
     notifier: _FakeNotifier | None = None,
+    notify_granularity: NotifyGranularity = NotifyGranularity.DIGEST,
     llm_concurrency: int = 5,
 ) -> Orchestrator:
     return Orchestrator(
@@ -160,6 +162,7 @@ def _build_orchestrator(
         mailer=mailer,
         mail_to=["me@example.com"] if mailer is not None else None,
         notifier=notifier,
+        notify_granularity=notify_granularity,
         llm_concurrency=llm_concurrency,
         clock=_FixedClock("2026-04-26T07:00:00+09:00"),
     )
@@ -417,3 +420,151 @@ def test_orchestrator_rejects_mailer_without_mail_to() -> None:
             mailer=_FakeMailer(),
             mail_to=None,
         )
+
+
+# ---------- per_article granularity ----------
+
+
+async def test_per_article_sends_one_mail_per_succeeded_article() -> None:
+    a1 = _article("p1", title="A1")
+    a2 = _article("p2", title="A2")
+    a3 = _article("p3", title="A3")
+    notion = _FakeNotion(articles=[a1, a2, a3])
+    fetcher = _FakeFetcher({a1.url: _ok_fetch(), a2.url: _ok_fetch(), a3.url: _ok_fetch()})
+    llm = _FakeLLM({"A1": _summary(), "A2": _summary(), "A3": _summary()})
+    mailer = _FakeMailer()
+
+    orch = _build_orchestrator(
+        notion=notion,
+        fetcher=fetcher,
+        llm=llm,
+        mailer=mailer,
+        notify_granularity=NotifyGranularity.PER_ARTICLE,
+    )
+    result = await orch.run()
+
+    assert result.succeeded == 3
+    assert result.failed == 0
+    assert result.notification_sent is True
+    assert len(mailer.calls) == 3, "per_article fans out N succeeded → N mails"
+    # Each subject should be distinct so the chat thread groups per-article.
+    subjects = [c["subject"] for c in mailer.calls]
+    assert len(set(subjects)) == 3
+    # All articles should be marked processed once writeback runs.
+    assert set(notion.marked) == {"p1", "p2", "p3"}
+
+
+async def test_per_article_with_partial_failure_appends_one_failure_summary() -> None:
+    # Failed articles MUST NOT generate one notification each (would spam the
+    # channel on bad days). They land in a single aggregated summary message.
+    a_ok = _article("p1", title="OK")
+    a_fetch_fail = _article("p2", title="FETCH")
+    a_llm_fail = _article("p3", title="LLM")
+    notion = _FakeNotion(articles=[a_ok, a_fetch_fail, a_llm_fail])
+    fetcher = _FakeFetcher(
+        {
+            a_ok.url: _ok_fetch(a_ok.url),
+            a_fetch_fail.url: _fail_fetch(a_fetch_fail.url, FetchFailureReason.TIMEOUT),
+            a_llm_fail.url: _ok_fetch(a_llm_fail.url),
+        }
+    )
+    llm = _FakeLLM({"OK": _summary(), "LLM": LLMError("schema invalid")})
+    mailer = _FakeMailer()
+
+    orch = _build_orchestrator(
+        notion=notion,
+        fetcher=fetcher,
+        llm=llm,
+        mailer=mailer,
+        notify_granularity=NotifyGranularity.PER_ARTICLE,
+    )
+    result = await orch.run()
+
+    assert result.succeeded == 1
+    assert result.failed == 2
+    # 1 per-article + 1 failure summary = 2 total mails
+    assert len(mailer.calls) == 2
+    last_subject = mailer.calls[-1]["subject"]
+    assert "失敗" in last_subject and "2" in last_subject
+
+
+async def test_per_article_zero_articles_still_sends_one_heartbeat() -> None:
+    # Empty-batch case: even in per_article mode we send the digest-style
+    # "today's queue is empty" message so operators can see the batch ran.
+    notion = _FakeNotion(articles=[])
+    mailer = _FakeMailer()
+
+    orch = _build_orchestrator(
+        notion=notion,
+        fetcher=_FakeFetcher({}),
+        llm=_FakeLLM({}),
+        mailer=mailer,
+        notify_granularity=NotifyGranularity.PER_ARTICLE,
+    )
+    result = await orch.run()
+
+    assert result.notification_sent is True
+    assert len(mailer.calls) == 1
+
+
+async def test_per_article_mid_send_failure_aborts_before_writeback() -> None:
+    # Failure semantics must hold per-article too: if any one of the fan-out
+    # mails raises, writeback is skipped so the next batch will reprocess
+    # everything (including the articles whose mail already succeeded — this
+    # is the documented duplicate-notification trade-off, MVP-acceptable).
+    class _FlakyMailer:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def send(self, *, to: list[str], subject: str, html: str, text: str) -> None:
+            self.calls.append({"to": to, "subject": subject})
+            if len(self.calls) == 2:
+                raise MailerError("ses send failed on second mail")
+
+    a1 = _article("p1", title="A1")
+    a2 = _article("p2", title="A2")
+    notion = _FakeNotion(articles=[a1, a2])
+    fetcher = _FakeFetcher({a1.url: _ok_fetch(), a2.url: _ok_fetch()})
+    llm = _FakeLLM({"A1": _summary(), "A2": _summary()})
+    flaky = _FlakyMailer()
+
+    orch = _build_orchestrator(
+        notion=notion,
+        fetcher=fetcher,
+        llm=llm,
+        mailer=flaky,  # type: ignore[arg-type]
+        notify_granularity=NotifyGranularity.PER_ARTICLE,
+    )
+
+    with pytest.raises(MailerError):
+        await orch.run()
+
+    assert len(flaky.calls) == 2, "second send raised — third must not run"
+    assert notion.summary_writes == [], "writeback must not run after partial send failure"
+    assert notion.marked == []
+
+
+async def test_per_article_fans_out_to_both_channels_in_order() -> None:
+    a1 = _article("p1", title="A1")
+    a2 = _article("p2", title="A2")
+    notion = _FakeNotion(articles=[a1, a2])
+    fetcher = _FakeFetcher({a1.url: _ok_fetch(), a2.url: _ok_fetch()})
+    llm = _FakeLLM({"A1": _summary(), "A2": _summary()})
+    mailer = _FakeMailer()
+    notifier = _FakeNotifier()
+
+    orch = _build_orchestrator(
+        notion=notion,
+        fetcher=fetcher,
+        llm=llm,
+        mailer=mailer,
+        notifier=notifier,
+        notify_granularity=NotifyGranularity.PER_ARTICLE,
+    )
+    result = await orch.run()
+
+    assert result.notification_sent is True
+    assert len(mailer.calls) == 2
+    assert len(notifier.calls) == 2
+    # Both channels saw the same per-article subjects, in the same order.
+    assert [c["subject"] for c in mailer.calls] == [c["subject"] for c in notifier.calls]

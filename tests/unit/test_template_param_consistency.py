@@ -69,6 +69,7 @@ EXPECTED: list[tuple[str, str | None, Any]] = [
     ("NotionStatusUnread", "notion_status_unread", str),
     ("NotionStatusProcessed", "notion_status_processed", str),
     ("NotifyChannels", None, str),  # not a single Config attr; checked separately
+    ("NotifyGranularity", None, str),  # parsed via _parse_notify_granularity; checked separately
     ("NotionStatusProperty", "notion_status_property", str),
     ("NotionTypeProperty", "notion_type_property", str),
     ("NotionPriorityProperty", "notion_priority_property", str),
@@ -131,6 +132,15 @@ class TestTemplateParameterDefaults:
         # Config.from_env via os.environ.get("NOTIFY_CHANNELS", "mail").
         # We only assert template.yaml stays "mail" so Lambda matches local.
         assert template_defaults["NotifyChannels"] == "mail"
+
+    def test_notify_granularity_default_is_digest(self, template_defaults: dict[str, str]) -> None:
+        # NotifyGranularity is parsed by _parse_notify_granularity, but its
+        # template.yaml default and Config field default must agree on "digest"
+        # so the legacy single-message behavior keeps applying without action.
+        from read_later_digest.config import NotifyGranularity
+
+        assert template_defaults["NotifyGranularity"] == "digest"
+        assert NotifyGranularity.DIGEST.value == "digest"
 
 
 class TestSamconfigTmplDriftGuard:

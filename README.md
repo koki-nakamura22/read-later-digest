@@ -111,6 +111,21 @@ sam deploy
 | `LambdaTimeoutSeconds` | 600 | Lambda タイムアウト(最大 900) |
 | `LambdaMemorySizeMb` | 512 | Lambda メモリ |
 | `LogRetentionDays` | 30 | CloudWatch Logs 保持期間 |
+| `NotifyChannels` | `mail` | 通知 channel(`mail` / `slack` カンマ区切り) |
+| `NotifyGranularity` | `digest` | 通知粒度。詳細は [通知粒度の選択](#通知粒度の選択) |
+
+### 通知粒度の選択
+
+`NotifyGranularity` で「1 ダイジェスト = 1 通」と「1 記事 = 1 通」を切り替えられる。全 `NotifyChannels` に共通で適用される(channel ごとの個別指定はサポートしない)。
+
+| 値 | 挙動 |
+|---|---|
+| `digest`(既定) | 成功・失敗をまとめた 1 通を送る(従来挙動)。設定変更不要で従来動作を維持。 |
+| `per_article` | 成功記事ごとに 1 通 + 失敗があれば末尾に集約サマリ 1 通。Slack でスレッド分割や個別記事への絵文字リアクションを使う運用向け。 |
+
+`per_article` モードで通知途中に送信が失敗するとバッチを中断する(Notion 書き戻しは実行されない)。詳細は `docs/functional-design.md` の「通知粒度」節を参照。
+
+ローカルで切り替える場合は `samconfig.toml` の `NotifyGranularity=...` を編集して `uv run python scripts/gen-env.py` を再実行する。Lambda 側は次回 `sam deploy` で反映される。
 
 ### 一時停止 / 再開
 

@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from read_later_digest.config import Config, NotificationChannel, _parse_notification_channels
+from read_later_digest.config import (
+    Config,
+    NotificationChannel,
+    NotifyGranularity,
+    _parse_notification_channels,
+    _parse_notify_granularity,
+)
 
 REQUIRED_BASE_ENV = {
     "NOTION_DB_ID": "db-id",
@@ -106,6 +112,45 @@ class TestConfigFromEnvSlackOnly:
 
         with pytest.raises(RuntimeError, match="'SLACK_WEBHOOK_URL' is not set"):
             Config.from_env()
+
+
+class TestParseNotifyGranularity:
+    def test_default_value_is_digest_when_explicit(self) -> None:
+        assert _parse_notify_granularity("digest") is NotifyGranularity.DIGEST
+
+    def test_per_article_value(self) -> None:
+        assert _parse_notify_granularity("per_article") is NotifyGranularity.PER_ARTICLE
+
+    def test_whitespace_and_case_normalized(self) -> None:
+        assert _parse_notify_granularity("  PER_ARTICLE  ") is NotifyGranularity.PER_ARTICLE
+
+    def test_empty_raises(self) -> None:
+        with pytest.raises(RuntimeError, match="NOTIFY_GRANULARITY' is empty"):
+            _parse_notify_granularity("   ")
+
+    def test_unknown_raises_with_listing(self) -> None:
+        with pytest.raises(RuntimeError, match="unknown NOTIFY_GRANULARITY value 'bulk'"):
+            _parse_notify_granularity("bulk")
+
+
+class TestConfigNotifyGranularity:
+    def test_default_is_digest_when_env_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_base_env(monkeypatch)
+        monkeypatch.setenv("MAIL_FROM", "from@example.com")
+        monkeypatch.setenv("MAIL_TO", "to@example.com")
+        monkeypatch.delenv("NOTIFY_GRANULARITY", raising=False)
+
+        cfg = Config.from_env()
+        assert cfg.notify_granularity is NotifyGranularity.DIGEST
+
+    def test_per_article_when_env_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_base_env(monkeypatch)
+        monkeypatch.setenv("MAIL_FROM", "from@example.com")
+        monkeypatch.setenv("MAIL_TO", "to@example.com")
+        monkeypatch.setenv("NOTIFY_GRANULARITY", "per_article")
+
+        cfg = Config.from_env()
+        assert cfg.notify_granularity is NotifyGranularity.PER_ARTICLE
 
 
 class TestConfigFromEnvCombined:
