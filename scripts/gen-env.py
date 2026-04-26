@@ -33,6 +33,17 @@ PARAM_TO_ENV: dict[str, str] = {
     "NotionStatusProcessed": "NOTION_STATUS_PROCESSED",
     "MailFrom": "MAIL_FROM",
     "MailTo": "MAIL_TO",
+    "NotifyChannels": "NOTIFY_CHANNELS",
+    "NotionStatusProperty": "NOTION_STATUS_PROPERTY",
+    "NotionTypeProperty": "NOTION_TYPE_PROPERTY",
+    "NotionPriorityProperty": "NOTION_PRIORITY_PROPERTY",
+    "LlmModel": "LLM_MODEL",
+    "LlmConcurrency": "LLM_CONCURRENCY",
+    "LlmBodyMaxChars": "LLM_BODY_MAX_CHARS",
+    "LlmMaxRateLimitRetries": "LLM_MAX_RATE_LIMIT_RETRIES",
+    "LlmInitialBackoffSec": "LLM_INITIAL_BACKOFF_SEC",
+    "FetchTimeoutSec": "FETCH_TIMEOUT_SEC",
+    "SlackTimeoutSec": "SLACK_TIMEOUT_SEC",
 }
 
 
