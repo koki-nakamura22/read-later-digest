@@ -25,6 +25,7 @@ from read_later_digest.config import Config
 
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_PATH = ROOT / "template.yaml"
+SAMCONFIG_TMPL_PATH = ROOT / "samconfig.toml.tmpl"
 
 
 def _parse_parameter_defaults(text: str) -> dict[str, str]:
@@ -64,7 +65,7 @@ def _parse_parameter_defaults(text: str) -> dict[str, str]:
 
 
 # (PascalCase param name in template.yaml, attribute on Config, expected value type)
-EXPECTED: list[tuple[str, str, Any]] = [
+EXPECTED: list[tuple[str, str | None, Any]] = [
     ("NotionStatusUnread", "notion_status_unread", str),
     ("NotionStatusProcessed", "notion_status_processed", str),
     ("NotifyChannels", None, str),  # not a single Config attr; checked separately
@@ -132,3 +133,46 @@ class TestTemplateParameterDefaults:
         # Config.from_env via os.environ.get("NOTIFY_CHANNELS", "mail").
         # We only assert template.yaml stays "mail" so Lambda matches local.
         assert template_defaults["NotifyChannels"] == "mail"
+
+
+class TestSamconfigTmplDriftGuard:
+    """samconfig.toml.tmpl と template.yaml / gen-env.py のキー集合一致を検証。
+
+    tmpl の parameter_overrides に Lambda Parameter を追加し忘れる/逆に
+    存在しない PascalCase を書いてしまう、といった片側ドリフトを検知する。
+    """
+
+    @pytest.fixture(scope="class")
+    def tmpl_override_keys(self) -> set[str]:
+        import tomllib
+
+        with SAMCONFIG_TMPL_PATH.open("rb") as f:
+            data = tomllib.load(f)
+        overrides = data["default"]["deploy"]["parameters"]["parameter_overrides"]
+        keys: set[str] = set()
+        for token in overrides:
+            assert isinstance(token, str)
+            assert "=" in token, f"malformed override entry: {token!r}"
+            key, _ = token.split("=", 1)
+            keys.add(key.strip())
+        return keys
+
+    def test_tmpl_keys_match_param_to_env(self, tmpl_override_keys: set[str]) -> None:
+        # PARAM_TO_ENV is the union of all PascalCase params that should be
+        # exposed as Lambda env vars. samconfig.toml.tmpl must seed every one
+        # of them in parameter_overrides so a fresh `cp tmpl samconfig.toml`
+        # produces a deployable + locally-runnable config without manual edits.
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "gen_env_for_tmpl_check", ROOT / "scripts" / "gen-env.py"
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        param_to_env_keys = set(module.PARAM_TO_ENV.keys())
+
+        missing = param_to_env_keys - tmpl_override_keys
+        extra = tmpl_override_keys - param_to_env_keys
+        assert not missing, f"samconfig.toml.tmpl is missing parameter_overrides for: {sorted(missing)}"
+        assert not extra, f"samconfig.toml.tmpl has stale parameter_overrides for: {sorted(extra)}"
