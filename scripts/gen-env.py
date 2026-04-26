@@ -78,8 +78,7 @@ def quote(value: str) -> str:
 def main() -> int:
     if not SAMCONFIG.exists():
         print(
-            f"error: {SAMCONFIG.name} not found. "
-            "Run: cp samconfig.toml.tmpl samconfig.toml",
+            f"error: {SAMCONFIG.name} not found. Run: cp samconfig.toml.tmpl samconfig.toml",
             file=sys.stderr,
         )
         return 1
