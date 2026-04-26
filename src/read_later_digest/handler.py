@@ -13,7 +13,7 @@ from read_later_digest.adapters.article_fetcher import ArticleFetcher
 from read_later_digest.adapters.llm.claude import ClaudeLLMClient
 from read_later_digest.adapters.mailer.ses import SesMailer
 from read_later_digest.adapters.notion_repository import NotionClientLike, NotionRepository
-from read_later_digest.config import Config
+from read_later_digest.config import Config, NotificationChannel
 from read_later_digest.domain.digest_builder import DigestBuilder
 from read_later_digest.domain.models import RunResult
 from read_later_digest.logging_setup import logger
@@ -36,6 +36,14 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
 
 
 async def _run(config: Config) -> RunResult:
+    # Orchestrator currently routes through Mailer only. Other channels are accepted
+    # by Config (forward-compatible) but their runtime wiring lands in a follow-up PR.
+    if config.notification_channels != frozenset({NotificationChannel.MAIL}):
+        raise NotImplementedError(
+            "multi-channel notification routing is not yet wired in the orchestrator; "
+            f"only NOTIFY_CHANNELS=mail is supported at runtime "
+            f"(got: {sorted(c.value for c in config.notification_channels)})"
+        )
     notion_client: NotionClientLike = NotionClient(auth=config.notion_token)  # type: ignore[assignment]
     notion_repo = NotionRepository(
         client=notion_client,

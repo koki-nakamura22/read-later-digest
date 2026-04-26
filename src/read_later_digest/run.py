@@ -13,7 +13,7 @@ from read_later_digest.adapters.article_fetcher import ArticleFetcher
 from read_later_digest.adapters.llm.claude import ClaudeLLMClient
 from read_later_digest.adapters.mailer.ses import SesMailer
 from read_later_digest.adapters.notion_repository import NotionClientLike, NotionRepository
-from read_later_digest.config import Config
+from read_later_digest.config import Config, NotificationChannel
 from read_later_digest.domain.digest_builder import DigestBuilder
 from read_later_digest.domain.models import RunResult
 from read_later_digest.logging_setup import logger
@@ -34,6 +34,13 @@ def _parse_args() -> argparse.Namespace:
 
 
 async def _run(config: Config, *, dry_run: bool) -> RunResult:
+    # See handler._run: same orchestrator constraint applies.
+    if config.notification_channels != frozenset({NotificationChannel.MAIL}):
+        raise NotImplementedError(
+            "multi-channel notification routing is not yet wired in the orchestrator; "
+            f"only NOTIFY_CHANNELS=mail is supported at runtime "
+            f"(got: {sorted(c.value for c in config.notification_channels)})"
+        )
     notion_client: NotionClientLike = NotionClient(auth=config.notion_token)  # type: ignore[assignment]
     notion_repo = NotionRepository(
         client=notion_client,
