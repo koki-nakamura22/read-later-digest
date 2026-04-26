@@ -43,26 +43,92 @@ def _parse_notification_channels(raw: str) -> frozenset[NotificationChannel]:
 
 @dataclass(frozen=True)
 class Config:
+    """Runtime configuration loaded from environment variables.
+
+    Each attribute below is populated by :meth:`from_env` from a specific
+    environment variable. Required vars raise ``RuntimeError`` at startup if
+    missing; optional vars fall back to the documented default.
+    """
+
     notion_db_id: str
+    """Notion database ID for the read-later list. Source: ``NOTION_DB_ID`` (required)."""
+
     notion_token: str
+    """Notion integration token used to authenticate the Notion API.
+    Source: ``NOTION_TOKEN`` (required, secret)."""
+
     anthropic_api_key: str
+    """Anthropic API key used to call Claude for summarization.
+    Source: ``ANTHROPIC_API_KEY`` (required, secret)."""
+
     notification_channels: frozenset[NotificationChannel]
+    """Enabled notification delivery channels. Parsed from a CSV like ``mail,slack``.
+    Source: ``NOTIFY_CHANNELS`` (optional, default: ``mail``)."""
+
     mail_from: str = ""
+    """Sender email address for digest mails. Required only when the ``mail``
+    channel is enabled. Source: ``MAIL_FROM``."""
+
     mail_to: list[str] = field(default_factory=list)
+    """Recipient email addresses for digest mails (CSV is split by comma).
+    Required only when the ``mail`` channel is enabled. Source: ``MAIL_TO``."""
+
     notion_status_property: str = "Status"
+    """Name of the Notion property representing the read/processed status.
+    Source: ``NOTION_STATUS_PROPERTY`` (optional, default: ``Status``)."""
+
     notion_status_unread: str = "未読"
+    """Status value indicating an unread (to-be-processed) entry.
+    Source: ``NOTION_STATUS_UNREAD`` (optional, default: ``未読``)."""
+
     notion_status_processed: str = "処理済み"
+    """Status value written back after the entry has been digested.
+    Source: ``NOTION_STATUS_PROCESSED`` (optional, default: ``処理済み``)."""
+
     notion_type_property: str = "Type"
+    """Name of the Notion property representing the entry type/category.
+    Source: ``NOTION_TYPE_PROPERTY`` (optional, default: ``Type``)."""
+
     notion_priority_property: str = "Priority"
+    """Name of the Notion property representing the entry priority.
+    Source: ``NOTION_PRIORITY_PROPERTY`` (optional, default: ``Priority``)."""
+
     llm_model: str = "claude-sonnet-4-6"
+    """Claude model ID used for summarization.
+    Source: ``LLM_MODEL`` (optional, default: ``claude-sonnet-4-6``)."""
+
     llm_body_max_chars: int = 30_000
+    """Maximum number of characters of fetched body text passed to the LLM.
+    Longer bodies are truncated to control token cost.
+    Source: ``LLM_BODY_MAX_CHARS`` (optional, default: ``30000``)."""
+
     llm_max_rate_limit_retries: int = 3
+    """Maximum retry count for LLM rate-limit (429) errors before giving up.
+    Source: ``LLM_MAX_RATE_LIMIT_RETRIES`` (optional, default: ``3``)."""
+
     llm_initial_backoff_sec: float = 1.0
+    """Initial backoff (seconds) for exponential retry on LLM rate-limit errors.
+    Source: ``LLM_INITIAL_BACKOFF_SEC`` (optional, default: ``1.0``)."""
+
     llm_concurrency: int = 5
+    """Maximum number of concurrent LLM requests during digest building.
+    Source: ``LLM_CONCURRENCY`` (optional, default: ``5``)."""
+
     fetch_timeout_sec: float = 15.0
+    """HTTP timeout (seconds) for fetching the URL body of each entry.
+    Source: ``FETCH_TIMEOUT_SEC`` (optional, default: ``15.0``)."""
+
     aws_region: str = "ap-northeast-1"
+    """AWS region used for SES (mail) and other AWS clients.
+    Source: ``AWS_REGION`` (optional, default: ``ap-northeast-1``)."""
+
     slack_webhook_url: str | None = None
+    """Slack Incoming Webhook URL for digest delivery. Required only when the
+    ``slack`` channel is enabled. Source: ``SLACK_WEBHOOK_URL`` (secret)."""
+
     slack_timeout_sec: float = 10.0
+    """HTTP timeout (seconds) for Slack webhook POST requests.
+    Source: ``SLACK_TIMEOUT_SEC`` (optional, default: ``10.0``)."""
 
     @classmethod
     def from_env(cls) -> "Config":
