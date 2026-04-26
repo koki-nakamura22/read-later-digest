@@ -6,6 +6,19 @@ Parameters:
   NotionDbId:
     Type: String
     Description: Notion database ID containing the saved articles.
+  NotionToken:
+    Type: String
+    NoEcho: true
+    Description: Notion integration token used to authenticate the Notion API.
+  AnthropicApiKey:
+    Type: String
+    NoEcho: true
+    Description: Anthropic API key used to call Claude for summarization.
+  SlackWebhookUrl:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: Slack incoming webhook URL (required only when NOTIFY_CHANNELS contains 'slack').
   NotionStatusUnread:
     Type: String
     Default: '未読'
@@ -36,9 +49,6 @@ Parameters:
   LogRetentionDays:
     Type: Number
     Default: 30
-  SecretsPrefix:
-    Type: String
-    Default: '/read-later-digest/'
   NotifyChannels:
     Type: String
     Default: 'mail'
@@ -95,11 +105,13 @@ Resources:
       Environment:
         Variables:
           NOTION_DB_ID: !Ref NotionDbId
+          NOTION_TOKEN: !Ref NotionToken
+          ANTHROPIC_API_KEY: !Ref AnthropicApiKey
+          SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
           NOTION_STATUS_UNREAD: !Ref NotionStatusUnread
           NOTION_STATUS_PROCESSED: !Ref NotionStatusProcessed
           MAIL_FROM: !Ref MailFrom
           MAIL_TO: !Ref MailTo
-          SECRETS_PREFIX: !Ref SecretsPrefix
           NOTIFY_CHANNELS: !Ref NotifyChannels
           NOTION_STATUS_PROPERTY: !Ref NotionStatusProperty
           NOTION_TYPE_PROPERTY: !Ref NotionTypeProperty
@@ -129,17 +141,6 @@ Resources:
                 - ses:SendEmail
                 - ses:SendRawEmail
               Resource: '*'
-            - Sid: SecretsRead
-              Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:read-later-digest/*'
-            - Sid: SsmRead
-              Effect: Allow
-              Action:
-                - ssm:GetParameter
-                - ssm:GetParameters
-              Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SecretsPrefix}*'
 
   ReadLaterDigestLogGroup:
     Type: AWS::Logs::LogGroup
