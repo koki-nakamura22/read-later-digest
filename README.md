@@ -11,7 +11,15 @@ Notion DB に溜まる「後で読む」記事を、LLM で要約して日次で
 ```bash
 uv venv
 uv pip install -e ".[dev]"
+
+# samconfig.toml を作成し、自身の環境に合わせて値を編集
+cp samconfig.toml.tmpl samconfig.toml
+
+# samconfig.toml から .env を生成
+uv run python scripts/gen-env.py
 ```
+
+`samconfig.toml` は環境変数の単一の出所として、ローカル実行 (`uv run`) と デプロイ (`sam deploy`) の両方を駆動する。詳細は [環境変数](#環境変数) を参照。
 
 ### テスト
 
@@ -32,20 +40,25 @@ uv run python -m read_later_digest.run
 uv run python -m read_later_digest.run --dry-run
 ```
 
-必要な環境変数: `NOTION_DB_ID`, `NOTION_TOKEN`, `ANTHROPIC_API_KEY`, `MAIL_FROM`, `MAIL_TO`(任意で `LLM_CONCURRENCY`, `FETCH_TIMEOUT_SEC` ほか — `src/read_later_digest/config.py` を参照)。
+`.env` は `samconfig.toml` から自動生成されるため、直接編集しない。値を変更したい場合は `samconfig.toml` を編集して `uv run python scripts/gen-env.py` を再実行する。
+
+## 環境変数
+
+`samconfig.toml`(git 管理外、`samconfig.toml.tmpl` から `cp` で作成)が真実の出所。以下の2系統から成る:
+
+1. `[default.deploy.parameters].parameter_overrides` — `template.yaml` の Parameters (PascalCase) と対応。`sam deploy` がそのまま使う。`scripts/gen-env.py` が `NotionDbId` → `NOTION_DB_ID` のように変換して `.env` にも展開する。
+2. `[local]` — ローカル実行 (`uv run`) でのみ必要な env (UPPER_SNAKE)。機密 (`NOTION_TOKEN`, `ANTHROPIC_API_KEY`, `SLACK_WEBHOOK_URL`) もここに置く。Lambda には流れない。
+
+全 env のデフォルト値・型は `src/read_later_digest/config.py` を参照。
+
+> **TODO**: 機密値は当面 `samconfig.toml` で管理しているが、リポジトリ共有 / CI 導入 / prod 環境分離のいずれかが発生したタイミングで AWS Secrets Manager (template.yaml の `SECRETS_PREFIX` 経由) に移行する。
 
 ## デプロイ (AWS Lambda + EventBridge)
 
-`template.yaml` で Lambda 関数 / EventBridge 日次スケジュール / IAM ロール / CloudWatch Logs を宣言している。
+`template.yaml` で Lambda 関数 / EventBridge 日次スケジュール / IAM ロール / CloudWatch Logs を宣言している。`samconfig.toml` の `parameter_overrides` を読むため、コマンドラインでの override は不要。
 
 ```bash
-# 初回(対話形式でパラメータと S3 バケットを設定)
 sam build
-sam deploy --guided \
-  --parameter-overrides \
-    NotionDbId=xxx MailFrom=digest@example.com MailTo=me@example.com
-
-# 2 回目以降
 sam deploy
 ```
 
