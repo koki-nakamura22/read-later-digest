@@ -46,12 +46,12 @@ uv run python -m read_later_digest.run --dry-run
 
 `samconfig.toml`(git 管理外、`samconfig.toml.tmpl` から `cp` で作成)が真実の出所。以下の2系統から成る:
 
-1. `[default.deploy.parameters].parameter_overrides` — `template.yaml` の Parameters (PascalCase) と対応。`sam deploy` がそのまま使う。`scripts/gen-env.py` が `NotionDbId` → `NOTION_DB_ID` のように変換して `.env` にも展開する。
-2. `[local]` — ローカル実行 (`uv run`) でのみ必要な env (UPPER_SNAKE)。機密 (`NOTION_TOKEN`, `ANTHROPIC_API_KEY`, `SLACK_WEBHOOK_URL`) もここに置く。Lambda には流れない。
+1. `[default.deploy.parameters].parameter_overrides` — `template.yaml` の Parameters (PascalCase) と対応。`sam deploy` がそのまま使い、`scripts/gen-env.py` が `NotionDbId` → `NOTION_DB_ID` のように変換して `.env` にも展開する。**機密 (`NotionToken` / `AnthropicApiKey` / `SlackWebhookUrl`) もここに直書きする**。`template.yaml` 側で `NoEcho: true` 指定のため CloudFormation コンソールや `describe-stacks` 出力ではマスクされる。
+2. `[local]` — Lambda には流れない、ローカル限定の env (UPPER_SNAKE)。Lambda runtime がビルトインで提供する `AWS_REGION` などのみ。
 
 全 env のデフォルト値・型は `src/read_later_digest/config.py` を参照。
 
-> **TODO**: 機密値は当面 `samconfig.toml` で管理しているが、リポジトリ共有 / CI 導入 / prod 環境分離のいずれかが発生したタイミングで AWS Secrets Manager (template.yaml の `SECRETS_PREFIX` 経由) に移行する。
+> **将来検討**: リポジトリ共有 / CI 導入 / prod 環境分離が発生したタイミングで、機密の保管先を AWS Secrets Manager に移行することを検討する。それまでは個人利用前提で `samconfig.toml`(.gitignore 済み)+ `NoEcho` パラメータの組み合わせで運用する。
 
 ## デプロイ (AWS Lambda + EventBridge)
 

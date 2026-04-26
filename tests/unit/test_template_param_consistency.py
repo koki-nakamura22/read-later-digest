@@ -101,9 +101,7 @@ def config_defaults() -> Config:
 
 
 class TestTemplateParameterDefaults:
-    def test_parser_finds_all_expected_parameters(
-        self, template_defaults: dict[str, str]
-    ) -> None:
+    def test_parser_finds_all_expected_parameters(self, template_defaults: dict[str, str]) -> None:
         names = {name for name, _, _ in EXPECTED}
         missing = names - set(template_defaults)
         assert not missing, f"template.yaml is missing Default for: {sorted(missing)}"
@@ -174,5 +172,7 @@ class TestSamconfigTmplDriftGuard:
 
         missing = param_to_env_keys - tmpl_override_keys
         extra = tmpl_override_keys - param_to_env_keys
-        assert not missing, f"samconfig.toml.tmpl is missing parameter_overrides for: {sorted(missing)}"
+        assert not missing, (
+            f"samconfig.toml.tmpl is missing parameter_overrides for: {sorted(missing)}"
+        )
         assert not extra, f"samconfig.toml.tmpl has stale parameter_overrides for: {sorted(extra)}"
