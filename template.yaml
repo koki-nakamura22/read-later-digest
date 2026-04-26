@@ -1,0 +1,108 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: read-later-digest — daily Notion → Claude → SES batch (F7)
+
+Parameters:
+  NotionDbId:
+    Type: String
+    Description: Notion database ID containing the saved articles.
+  NotionStatusUnread:
+    Type: String
+    Default: '未読'
+  NotionStatusProcessed:
+    Type: String
+    Default: '処理済み'
+  MailFrom:
+    Type: String
+    Description: SES-verified sender address.
+  MailTo:
+    Type: String
+    Description: Comma-separated recipient list.
+  ScheduleExpression:
+    Type: String
+    # 22:00 UTC daily = 07:00 JST daily
+    Default: 'cron(0 22 * * ? *)'
+    Description: EventBridge schedule expression (UTC).
+  LambdaTimeoutSeconds:
+    Type: Number
+    Default: 600
+    MinValue: 60
+    MaxValue: 900
+  LambdaMemorySizeMb:
+    Type: Number
+    Default: 512
+    MinValue: 128
+    MaxValue: 3008
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+  SecretsPrefix:
+    Type: String
+    Default: '/read-later-digest/'
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Architectures: [arm64]
+    Tracing: Active
+
+Resources:
+  ReadLaterDigestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: read-later-digest
+      CodeUri: ./src
+      Handler: read_later_digest.handler.lambda_handler
+      Timeout: !Ref LambdaTimeoutSeconds
+      MemorySize: !Ref LambdaMemorySizeMb
+      Environment:
+        Variables:
+          NOTION_DB_ID: !Ref NotionDbId
+          NOTION_STATUS_UNREAD: !Ref NotionStatusUnread
+          NOTION_STATUS_PROCESSED: !Ref NotionStatusProcessed
+          MAIL_FROM: !Ref MailFrom
+          MAIL_TO: !Ref MailTo
+          SECRETS_PREFIX: !Ref SecretsPrefix
+          POWERTOOLS_SERVICE_NAME: read-later-digest
+          POWERTOOLS_LOG_LEVEL: INFO
+      Events:
+        DailySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: !Ref ScheduleExpression
+            Name: read-later-digest-daily
+            Description: Daily trigger for read-later-digest batch.
+            Enabled: true
+      Policies:
+        - Statement:
+            - Sid: SesSend
+              Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: '*'
+            - Sid: SecretsRead
+              Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:read-later-digest/*'
+            - Sid: SsmRead
+              Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+              Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SecretsPrefix}*'
+
+  ReadLaterDigestLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ReadLaterDigestFunction}'
+      RetentionInDays: !Ref LogRetentionDays
+
+Outputs:
+  FunctionName:
+    Description: Lambda function name.
+    Value: !Ref ReadLaterDigestFunction
+  FunctionArn:
+    Description: Lambda function ARN.
+    Value: !GetAtt ReadLaterDigestFunction.Arn

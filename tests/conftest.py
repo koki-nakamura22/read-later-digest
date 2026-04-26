@@ -65,14 +65,38 @@ class FakePagesAPI:
         return nxt
 
 
+class FakeBlocksChildrenAPI:
+    """Test double for notion_client.Client.blocks.children."""
+
+    def __init__(self, responses: Iterable[dict[str, Any] | Exception] | None = None) -> None:
+        self._responses: list[dict[str, Any] | Exception] = list(responses or [])
+        self.calls: list[dict[str, Any]] = []
+
+    def append(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        if not self._responses:
+            return {}
+        nxt = self._responses.pop(0)
+        if isinstance(nxt, Exception):
+            raise nxt
+        return nxt
+
+
+class FakeBlocksAPI:
+    def __init__(self, children: FakeBlocksChildrenAPI | None = None) -> None:
+        self.children = children or FakeBlocksChildrenAPI()
+
+
 class FakeNotionClient:
     def __init__(
         self,
         databases: FakeDatabasesAPI,
         pages: FakePagesAPI | None = None,
+        blocks: FakeBlocksAPI | None = None,
     ) -> None:
         self.databases = databases
         self.pages = pages or FakePagesAPI()
+        self.blocks = blocks or FakeBlocksAPI()
 
 
 @pytest.fixture
@@ -84,9 +108,7 @@ def make_fake_client() -> Callable[[Iterable[dict[str, Any] | Exception]], FakeN
 
 
 @pytest.fixture
-def make_fake_pages_client() -> Callable[
-    [Iterable[dict[str, Any] | Exception]], FakeNotionClient
-]:
+def make_fake_pages_client() -> Callable[[Iterable[dict[str, Any] | Exception]], FakeNotionClient]:
     """Build a FakeNotionClient whose `pages.update` is driven by a response queue."""
 
     def _factory(responses: Iterable[dict[str, Any] | Exception]) -> FakeNotionClient:

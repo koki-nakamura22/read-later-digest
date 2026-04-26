@@ -390,9 +390,7 @@ class TestMarkProcessed:
 
         await repo.mark_processed("page-id-2")
 
-        assert client.pages.calls[0]["properties"] == {
-            "ステータス": {"select": {"name": "Done"}}
-        }
+        assert client.pages.calls[0]["properties"] == {"ステータス": {"select": {"name": "Done"}}}
 
     async def test_retries_on_429_then_succeeds(
         self, make_fake_pages_client: Any, no_sleep: None
@@ -450,3 +448,105 @@ class TestMarkProcessed:
         with pytest.raises(NotionError):
             await repo.mark_processed("page-id-6")
         assert len(client.pages.calls) == 1
+
+
+class TestWriteSummary:
+    @staticmethod
+    def _build_summary(
+        *,
+        type_: Any = None,
+        priority: Any = None,
+    ) -> Any:
+        from read_later_digest.domain.models import ArticleSummary
+
+        return ArticleSummary(
+            summary_lines=["s1", "s2", "s3"],
+            key_points=["k1", "k2"],
+            type_=type_,
+            priority=priority,
+        )
+
+    async def test_appends_summary_blocks_and_updates_type_priority(self) -> None:
+        from read_later_digest.domain.models import ArticleType, Priority
+        from tests.conftest import (
+            FakeBlocksAPI,
+            FakeBlocksChildrenAPI,
+            FakeDatabasesAPI,
+            FakeNotionClient,
+            FakePagesAPI,
+        )
+
+        children = FakeBlocksChildrenAPI([{}])
+        client = FakeNotionClient(
+            FakeDatabasesAPI([]),
+            FakePagesAPI([{}]),
+            FakeBlocksAPI(children),
+        )
+        repo = _build_repo(client)
+
+        await repo.write_summary(
+            "page-id-X",
+            self._build_summary(type_=ArticleType.TECH, priority=Priority.HIGH),
+        )
+
+        assert len(children.calls) == 1
+        appended = children.calls[0]
+        assert appended["block_id"] == "page-id-X"
+        # 1 heading + 3 summary lines + 1 heading + 2 bullet points = 7 blocks
+        assert len(appended["children"]) == 7
+
+        assert len(client.pages.calls) == 1
+        props = client.pages.calls[0]["properties"]
+        assert props["Type"] == {"select": {"name": "技術"}}
+        assert props["Priority"] == {"select": {"name": "高"}}
+
+    async def test_skips_property_update_when_type_and_priority_are_none(self) -> None:
+        from tests.conftest import (
+            FakeBlocksAPI,
+            FakeBlocksChildrenAPI,
+            FakeDatabasesAPI,
+            FakeNotionClient,
+            FakePagesAPI,
+        )
+
+        children = FakeBlocksChildrenAPI([{}])
+        client = FakeNotionClient(
+            FakeDatabasesAPI([]),
+            FakePagesAPI(),
+            FakeBlocksAPI(children),
+        )
+        repo = _build_repo(client)
+
+        await repo.write_summary("page-id-Y", self._build_summary())
+
+        assert len(children.calls) == 1
+        assert client.pages.calls == [], "no property update when type/priority absent"
+
+
+class TestWriteFailure:
+    async def test_appends_failure_paragraph_and_does_not_touch_properties(self) -> None:
+        from tests.conftest import (
+            FakeBlocksAPI,
+            FakeBlocksChildrenAPI,
+            FakeDatabasesAPI,
+            FakeNotionClient,
+            FakePagesAPI,
+        )
+
+        children = FakeBlocksChildrenAPI([{}])
+        client = FakeNotionClient(
+            FakeDatabasesAPI([]),
+            FakePagesAPI(),
+            FakeBlocksAPI(children),
+        )
+        repo = _build_repo(client)
+
+        await repo.write_failure("page-id-Z", "fetch_failed: timeout")
+
+        assert len(children.calls) == 1
+        appended = children.calls[0]
+        assert appended["block_id"] == "page-id-Z"
+        assert len(appended["children"]) == 1
+        text = appended["children"][0]["paragraph"]["rich_text"][0]["text"]["content"]
+        assert text == "[処理失敗] fetch_failed: timeout"
+        assert client.pages.calls == []

@@ -99,3 +99,13 @@ class RenderedDigest:
     subject: str
     html: str
     text: str
+
+
+@dataclass(frozen=True)
+class RunResult:
+    total_articles: int
+    succeeded: int
+    failed: int
+    mail_sent: bool
+    status_updated: int
+    duration_ms: int
