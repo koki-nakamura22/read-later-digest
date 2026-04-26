@@ -32,6 +32,8 @@ class Config:
     llm_concurrency: int = 5
     fetch_timeout_sec: float = 15.0
     aws_region: str = "ap-northeast-1"
+    slack_webhook_url: str | None = None
+    slack_timeout_sec: float = 10.0
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -59,4 +61,6 @@ class Config:
             llm_concurrency=int(os.environ.get("LLM_CONCURRENCY", "5")),
             fetch_timeout_sec=float(os.environ.get("FETCH_TIMEOUT_SEC", "15.0")),
             aws_region=os.environ.get("AWS_REGION", "ap-northeast-1"),
+            slack_webhook_url=os.environ.get("SLACK_WEBHOOK_URL") or None,
+            slack_timeout_sec=float(os.environ.get("SLACK_TIMEOUT_SEC", "10.0")),
         )

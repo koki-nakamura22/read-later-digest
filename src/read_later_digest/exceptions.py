@@ -12,3 +12,7 @@ class LLMError(AppError):
 
 class MailerError(AppError):
     """Raised when sending mail fails."""
+
+
+class NotifierError(AppError):
+    """Raised when sending a chat notification fails."""
