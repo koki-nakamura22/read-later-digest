@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Protocol
 
 from read_later_digest.adapters.mailer.base import Mailer
+from read_later_digest.adapters.notifier.base import Notifier
 from read_later_digest.domain.digest_builder import DigestBuilder
 from read_later_digest.domain.models import (
     ArticleSummary,
@@ -17,7 +18,7 @@ from read_later_digest.domain.models import (
     RenderedDigest,
     RunResult,
 )
-from read_later_digest.exceptions import LLMError, MailerError, NotionError
+from read_later_digest.exceptions import LLMError, MailerError, NotifierError, NotionError
 from read_later_digest.logging_setup import logger
 
 JST = timezone(timedelta(hours=9))
@@ -41,9 +42,12 @@ class _NotionRepo(Protocol):
 class Orchestrator:
     """Coordinates the daily batch flow: list → fetch+summarize → digest → send → write back.
 
-    Ordering invariant: Notion writeback (summary / mark_processed / failure) only runs
-    after the mailer reports a successful send. If the mailer raises, the batch aborts
-    and Notion records remain untouched (next run will reprocess).
+    Notification fan-out: at least one of `mailer` / `notifier` must be supplied;
+    both may be set, in which case both transports receive the same digest.
+    Ordering invariant: Notion writeback (summary / mark_processed / failure) only
+    runs after every configured notification channel reports a successful send.
+    If any channel raises, the batch aborts and Notion records remain untouched
+    (next run will reprocess).
     """
 
     def __init__(
@@ -52,18 +56,24 @@ class Orchestrator:
         notion: _NotionRepo,
         fetcher: _Fetcher,
         llm: _LLMClient,
-        mailer: Mailer,
         digest_builder: DigestBuilder,
-        mail_to: list[str],
+        mailer: Mailer | None = None,
+        mail_to: list[str] | None = None,
+        notifier: Notifier | None = None,
         llm_concurrency: int = 5,
         clock: Clock | None = None,
     ) -> None:
+        if mailer is None and notifier is None:
+            raise ValueError("at least one of mailer or notifier must be provided")
+        if mailer is not None and not mail_to:
+            raise ValueError("mail_to is required when mailer is configured")
         self._notion = notion
         self._fetcher = fetcher
         self._llm = llm
         self._mailer = mailer
+        self._notifier = notifier
         self._digest_builder = digest_builder
-        self._mail_to = mail_to
+        self._mail_to = mail_to or []
         self._sem = asyncio.Semaphore(max(1, llm_concurrency))
         self._clock = clock or _RealClock()
 
@@ -81,12 +91,14 @@ class Orchestrator:
         digest = Digest(target_date=target_date, succeeded=succeeded, failed=failed)
         rendered = self._digest_builder.build(digest)
 
-        mail_sent = await self._send(rendered, dry_run=dry_run)
-        if not mail_sent:
-            return self._make_result(articles, succeeded, failed, mail_sent, 0, started)
+        notification_sent = await self._send(rendered, dry_run=dry_run)
+        if not notification_sent:
+            return self._make_result(articles, succeeded, failed, notification_sent, 0, started)
 
         status_updated = 0 if dry_run else await self._writeback(succeeded, failed)
-        return self._make_result(articles, succeeded, failed, mail_sent, status_updated, started)
+        return self._make_result(
+            articles, succeeded, failed, notification_sent, status_updated, started
+        )
 
     async def _process_articles(self, articles: list[NotionArticle]) -> list[ProcessedArticle]:
         if not articles:
@@ -133,23 +145,43 @@ class Orchestrator:
 
     async def _send(self, rendered: RenderedDigest, *, dry_run: bool) -> bool:
         if dry_run:
-            logger.info("dry-run: skipping mail send", extra={"subject": rendered.subject})
-            return False
-        try:
-            await self._mailer.send(
-                to=self._mail_to,
-                subject=rendered.subject,
-                html=rendered.html,
-                text=rendered.text,
+            logger.info(
+                "dry-run: skipping notification send",
+                extra={"subject": rendered.subject},
             )
-        except MailerError:
-            logger.exception("mail send failed; aborting batch")
-            raise
-        logger.info(
-            "mail sent",
-            extra={"subject": rendered.subject, "to_count": len(self._mail_to)},
-        )
-        return True
+            return False
+        sent_any = False
+        if self._mailer is not None:
+            try:
+                await self._mailer.send(
+                    to=self._mail_to,
+                    subject=rendered.subject,
+                    html=rendered.html,
+                    text=rendered.text,
+                )
+            except MailerError:
+                logger.exception("mail send failed; aborting batch")
+                raise
+            logger.info(
+                "mail sent",
+                extra={"subject": rendered.subject, "to_count": len(self._mail_to)},
+            )
+            sent_any = True
+        if self._notifier is not None:
+            try:
+                await self._notifier.send(
+                    subject=rendered.subject,
+                    text=rendered.text,
+                )
+            except NotifierError:
+                logger.exception("notifier send failed; aborting batch")
+                raise
+            logger.info(
+                "notifier sent",
+                extra={"subject": rendered.subject},
+            )
+            sent_any = True
+        return sent_any
 
     async def _writeback(
         self,
@@ -186,7 +218,7 @@ class Orchestrator:
         articles: list[NotionArticle],
         succeeded: list[ProcessedArticle],
         failed: list[ProcessedArticle],
-        mail_sent: bool,
+        notification_sent: bool,
         status_updated: int,
         started: float,
     ) -> RunResult:
@@ -195,7 +227,7 @@ class Orchestrator:
             total_articles=len(articles),
             succeeded=len(succeeded),
             failed=len(failed),
-            mail_sent=mail_sent,
+            notification_sent=notification_sent,
             status_updated=status_updated,
             duration_ms=duration_ms,
         )

@@ -106,6 +106,6 @@ class RunResult:
     total_articles: int
     succeeded: int
     failed: int
-    mail_sent: bool
+    notification_sent: bool
     status_updated: int
     duration_ms: int

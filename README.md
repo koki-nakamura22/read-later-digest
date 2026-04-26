@@ -58,6 +58,9 @@ uv run python -m read_later_digest.run --dry-run
 `template.yaml` で Lambda 関数 / EventBridge 日次スケジュール / IAM ロール / CloudWatch Logs を宣言している。`samconfig.toml` の `parameter_overrides` を読むため、コマンドラインでの override は不要。
 
 ```bash
+# pyproject.toml / uv.lock の変更を src/requirements.txt に反映 (sam build はこれを参照)
+uv run python scripts/sync-requirements.py
+
 sam build
 sam deploy
 ```
