@@ -10,6 +10,29 @@ class NotificationChannel(StrEnum):
     SLACK = "slack"
 
 
+class NotifyGranularity(StrEnum):
+    """Notification fan-out granularity selectable via NOTIFY_GRANULARITY.
+
+    `digest` (default) sends one combined message per channel per run, matching
+    the historical behavior. `per_article` sends one message per successfully
+    summarized article (plus, when applicable, one aggregated failure summary).
+    """
+
+    DIGEST = "digest"
+    PER_ARTICLE = "per_article"
+
+
+def _parse_notify_granularity(raw: str) -> NotifyGranularity:
+    """Parse a NOTIFY_GRANULARITY_* value into the enum, raising on unknown values."""
+    token = raw.strip().lower()
+    if not token:
+        raise RuntimeError("notify granularity value is empty")
+    valid = {g.value for g in NotifyGranularity}
+    if token not in valid:
+        raise RuntimeError(f"unknown notify granularity value {token!r} (valid: {sorted(valid)})")
+    return NotifyGranularity(token)
+
+
 def _resolve_secret(name: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -64,6 +87,19 @@ class Config:
     notification_channels: frozenset[NotificationChannel]
     """Enabled notification delivery channels. Parsed from a CSV like ``mail,slack``.
     Source: ``NOTIFY_CHANNELS`` (optional, default: ``mail``)."""
+
+    notify_granularity_mail: NotifyGranularity = NotifyGranularity.DIGEST
+    """Mail-channel fan-out granularity. ``digest`` sends one combined message
+    per run (legacy behavior). ``per_article`` sends one message per
+    successfully summarized article (plus an aggregated failure summary when
+    failures exist). Applies only to the mail transport; Slack is governed by
+    ``notify_granularity_slack`` so the two can differ.
+    Source: ``NOTIFY_GRANULARITY_MAIL`` (optional, default: ``digest``)."""
+
+    notify_granularity_slack: NotifyGranularity = NotifyGranularity.DIGEST
+    """Slack-channel fan-out granularity. Same semantics as
+    ``notify_granularity_mail`` but applied to the Slack notifier transport.
+    Source: ``NOTIFY_GRANULARITY_SLACK`` (optional, default: ``digest``)."""
 
     mail_from: str = ""
     """Sender email address for digest mails. Required only when the ``mail``
@@ -133,6 +169,12 @@ class Config:
     @classmethod
     def from_env(cls) -> "Config":
         channels = _parse_notification_channels(os.environ.get("NOTIFY_CHANNELS", "mail"))
+        granularity_mail = _parse_notify_granularity(
+            os.environ.get("NOTIFY_GRANULARITY_MAIL", "digest")
+        )
+        granularity_slack = _parse_notify_granularity(
+            os.environ.get("NOTIFY_GRANULARITY_SLACK", "digest")
+        )
 
         # Each channel's transport-specific env vars are required only when that
         # channel is enabled, so a slack-only deployment doesn't need MAIL_*
@@ -160,6 +202,8 @@ class Config:
             notion_token=_resolve_secret("NOTION_TOKEN"),
             anthropic_api_key=_resolve_secret("ANTHROPIC_API_KEY"),
             notification_channels=channels,
+            notify_granularity_mail=granularity_mail,
+            notify_granularity_slack=granularity_slack,
             mail_from=mail_from,
             mail_to=mail_to,
             notion_status_property=os.environ.get("NOTION_STATUS_PROPERTY", "Status"),

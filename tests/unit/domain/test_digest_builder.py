@@ -292,3 +292,65 @@ def test_custom_subject_prefix_is_used() -> None:
     rendered = builder.build(digest)
 
     assert rendered.subject.startswith("[custom] 2026-04-25")
+
+
+# --- per_article rendering ---------------------------------------------------
+
+
+def test_build_per_article_subject_includes_index_total_and_title(
+    builder: DigestBuilder,
+) -> None:
+    p = _success(title="Hello")
+
+    rendered = builder.build_per_article(p, target_date="2026-04-25", index=2, total=5)
+
+    assert rendered.subject == "[read-later-digest] 2026-04-25 (2/5) Hello"
+
+
+def test_build_per_article_text_contains_summary_keypoints_and_url(
+    builder: DigestBuilder,
+) -> None:
+    p = _success(
+        title="Hello",
+        url="https://example.com/h",
+        summary=_summary(summary_lines=["S1", "S2", "S3"], key_points=["K1", "K2"]),
+    )
+
+    rendered = builder.build_per_article(p, target_date="2026-04-25", index=1, total=1)
+
+    assert "https://example.com/h" in rendered.text
+    assert "S1" in rendered.text and "K1" in rendered.text
+
+
+def test_build_per_article_html_escapes_title_to_prevent_xss(builder: DigestBuilder) -> None:
+    p = _success(title="<script>alert(1)</script>")
+
+    rendered = builder.build_per_article(p, target_date="2026-04-25", index=1, total=1)
+
+    # Raw tag must not survive into the HTML output.
+    assert "<script>" not in rendered.html
+    assert "&lt;script&gt;" in rendered.html
+
+
+def test_build_per_article_rejects_failed_article(builder: DigestBuilder) -> None:
+    failed = _failure()
+
+    with pytest.raises(ValueError, match="successful ProcessedArticle"):
+        builder.build_per_article(failed, target_date="2026-04-25", index=1, total=1)
+
+
+def test_build_failure_summary_subject_and_listing(builder: DigestBuilder) -> None:
+    f1 = _failure(page_id="f1", title="失敗A", reason="fetch_failed: timeout")
+    f2 = _failure(page_id="f2", title="失敗B", reason="llm_failed: schema")
+
+    rendered = builder.build_failure_summary([f1, f2], target_date="2026-04-25")
+
+    assert rendered.subject == "[read-later-digest] 2026-04-25 失敗 2 件"
+    assert "失敗A" in rendered.text and "失敗B" in rendered.text
+    assert "fetch_failed: timeout" in rendered.text
+    assert "llm_failed: schema" in rendered.text
+
+
+def test_build_failure_summary_rejects_empty_list(builder: DigestBuilder) -> None:
+    with pytest.raises(ValueError, match="at least one failed article"):
+        builder.build_failure_summary([], target_date="2026-04-25")

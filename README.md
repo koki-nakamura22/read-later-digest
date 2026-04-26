@@ -111,6 +111,30 @@ sam deploy
 | `LambdaTimeoutSeconds` | 600 | Lambda タイムアウト(最大 900) |
 | `LambdaMemorySizeMb` | 512 | Lambda メモリ |
 | `LogRetentionDays` | 30 | CloudWatch Logs 保持期間 |
+| `NotifyChannels` | `mail` | 通知 channel(`mail` / `slack` カンマ区切り) |
+| `NotifyGranularityMail` | `digest` | mail channel の通知粒度。詳細は [通知粒度の選択](#通知粒度の選択) |
+| `NotifyGranularitySlack` | `digest` | Slack channel の通知粒度。mail とは独立に設定可。 |
+
+### 通知粒度の選択
+
+通知粒度は **channel ごとに独立して** 設定できる。例えば「mail はまとめて読みたいので `digest` のまま、Slack はスレッド分割したいので `per_article`」のような混在運用が可能。
+
+| 値 | 挙動 |
+|---|---|
+| `digest`(既定) | 成功・失敗をまとめた 1 通を送る(従来挙動)。設定変更不要で従来動作を維持。 |
+| `per_article` | 成功記事ごとに 1 通 + 失敗があれば末尾に集約サマリ 1 通。Slack でスレッド分割や個別記事への絵文字リアクションを使う運用向け。 |
+
+設定例:
+
+| ユースケース | `NotifyGranularityMail` | `NotifyGranularitySlack` |
+|---|---|---|
+| 従来挙動を維持 | `digest` | `digest` |
+| Slack だけ記事ごとに分けたい | `digest` | `per_article` |
+| 両方とも記事ごと | `per_article` | `per_article` |
+
+通知途中に送信が失敗するとバッチを中断する(Notion 書き戻しは実行されない)。mailer → notifier の順で送信されるため、mail が成功した後に Slack の途中で失敗したケースでも writeback は走らず、次回バッチで全件再処理(重複通知許容)となる。詳細は `docs/functional-design.md` の「通知粒度」節を参照。
+
+ローカルで切り替える場合は `samconfig.toml` の `NotifyGranularityMail=...` / `NotifyGranularitySlack=...` を編集して `uv run python scripts/gen-env.py` を再実行する。Lambda 側は次回 `sam deploy` で反映される。
 
 ### 一時停止 / 再開
 

@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from read_later_digest.config import Config, NotificationChannel, _parse_notification_channels
+from read_later_digest.config import (
+    Config,
+    NotificationChannel,
+    NotifyGranularity,
+    _parse_notification_channels,
+    _parse_notify_granularity,
+)
 
 REQUIRED_BASE_ENV = {
     "NOTION_DB_ID": "db-id",
@@ -105,6 +111,61 @@ class TestConfigFromEnvSlackOnly:
         monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
 
         with pytest.raises(RuntimeError, match="'SLACK_WEBHOOK_URL' is not set"):
+            Config.from_env()
+
+
+class TestParseNotifyGranularity:
+    def test_default_value_is_digest_when_explicit(self) -> None:
+        assert _parse_notify_granularity("digest") is NotifyGranularity.DIGEST
+
+    def test_per_article_value(self) -> None:
+        assert _parse_notify_granularity("per_article") is NotifyGranularity.PER_ARTICLE
+
+    def test_whitespace_and_case_normalized(self) -> None:
+        assert _parse_notify_granularity("  PER_ARTICLE  ") is NotifyGranularity.PER_ARTICLE
+
+    def test_empty_raises(self) -> None:
+        with pytest.raises(RuntimeError, match="notify granularity value is empty"):
+            _parse_notify_granularity("   ")
+
+    def test_unknown_raises_with_listing(self) -> None:
+        with pytest.raises(RuntimeError, match="unknown notify granularity value 'bulk'"):
+            _parse_notify_granularity("bulk")
+
+
+class TestConfigPerChannelNotifyGranularity:
+    def test_both_default_to_digest_when_envs_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_base_env(monkeypatch)
+        monkeypatch.setenv("MAIL_FROM", "from@example.com")
+        monkeypatch.setenv("MAIL_TO", "to@example.com")
+        monkeypatch.delenv("NOTIFY_GRANULARITY_MAIL", raising=False)
+        monkeypatch.delenv("NOTIFY_GRANULARITY_SLACK", raising=False)
+
+        cfg = Config.from_env()
+        assert cfg.notify_granularity_mail is NotifyGranularity.DIGEST
+        assert cfg.notify_granularity_slack is NotifyGranularity.DIGEST
+
+    def test_channels_can_be_set_independently(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The whole point of the per-channel split: a deployment can keep mail
+        # at digest (one combined daily mail) while letting slack run per-article
+        # so each article gets its own thread for emoji reactions.
+        _set_base_env(monkeypatch)
+        monkeypatch.setenv("MAIL_FROM", "from@example.com")
+        monkeypatch.setenv("MAIL_TO", "to@example.com")
+        monkeypatch.setenv("NOTIFY_GRANULARITY_MAIL", "digest")
+        monkeypatch.setenv("NOTIFY_GRANULARITY_SLACK", "per_article")
+
+        cfg = Config.from_env()
+        assert cfg.notify_granularity_mail is NotifyGranularity.DIGEST
+        assert cfg.notify_granularity_slack is NotifyGranularity.PER_ARTICLE
+
+    def test_unknown_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_base_env(monkeypatch)
+        monkeypatch.setenv("MAIL_FROM", "from@example.com")
+        monkeypatch.setenv("MAIL_TO", "to@example.com")
+        monkeypatch.setenv("NOTIFY_GRANULARITY_MAIL", "bulk")
+
+        with pytest.raises(RuntimeError, match="unknown notify granularity value 'bulk'"):
             Config.from_env()
 
 

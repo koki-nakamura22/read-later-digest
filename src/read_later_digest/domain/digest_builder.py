@@ -38,6 +38,50 @@ class DigestBuilder:
         html_body = self._render_html(subject, digest.target_date, succeeded, failed)
         return RenderedDigest(subject=subject, html=html_body, text=text)
 
+    def build_per_article(
+        self,
+        processed: ProcessedArticle,
+        *,
+        target_date: str,
+        index: int,
+        total: int,
+    ) -> RenderedDigest:
+        """Render one successfully summarized article as a standalone notification.
+
+        Used by NOTIFY_GRANULARITY=per_article. The caller is responsible for
+        passing only `ProcessStatus.SUCCESS` entries; failed articles share the
+        aggregated failure summary built by `build_failure_summary`.
+        """
+        if processed.summary is None:
+            raise ValueError("build_per_article requires a successful ProcessedArticle")
+        subject = self._build_per_article_subject(
+            target_date, index, total, processed.article.title
+        )
+        text = self._render_per_article_text(processed)
+        html_body = self._render_per_article_html(subject, processed)
+        return RenderedDigest(subject=subject, html=html_body, text=text)
+
+    def build_failure_summary(
+        self,
+        failed: list[ProcessedArticle],
+        *,
+        target_date: str,
+    ) -> RenderedDigest:
+        """Render a single aggregated failure summary for per_article mode.
+
+        Per the policy in docs/functional-design.md: failed articles are bundled
+        into one summary message rather than one-per-failure, so the chat
+        channel does not get spammed when many fetches fail in a row.
+        Returns a RenderedDigest the caller can hand to mailer/notifier.
+        """
+        if not failed:
+            raise ValueError("build_failure_summary requires at least one failed article")
+        ordered = self._sort_failed(failed)
+        subject = f"{self._subject_prefix} {target_date} 失敗 {len(ordered)} 件"
+        text = self._render_failure_text(target_date, ordered)
+        html_body = self._render_failure_html(subject, target_date, ordered)
+        return RenderedDigest(subject=subject, html=html_body, text=text)
+
     @staticmethod
     def _sort_succeeded(items: list[ProcessedArticle]) -> list[ProcessedArticle]:
         def key(p: ProcessedArticle) -> tuple[int, object, str]:
@@ -169,4 +213,86 @@ class DigestBuilder:
             parts.append("</ul>")
 
         parts.append("</body></html>")
+        return "".join(parts)
+
+    def _build_per_article_subject(
+        self, target_date: str, index: int, total: int, title: str
+    ) -> str:
+        return f"{self._subject_prefix} {target_date} ({index}/{total}) {title}"
+
+    def _render_per_article_text(self, p: ProcessedArticle) -> str:
+        assert p.summary is not None  # caller guarantee
+        type_label, priority_label = self._tag_label(p.summary)
+        lines: list[str] = []
+        lines.append(p.article.title)
+        lines.append(f"URL: {p.article.url}")
+        lines.append(f"タグ: {type_label} / 優先度: {priority_label}")
+        lines.append("")
+        lines.append("[3 行要約]")
+        for s in p.summary.summary_lines:
+            lines.append(f"- {s}")
+        lines.append("")
+        lines.append("[重要ポイント]")
+        for k in p.summary.key_points:
+            lines.append(f"- {k}")
+        return "\n".join(lines) + "\n"
+
+    def _render_per_article_html(self, subject: str, p: ProcessedArticle) -> str:
+        assert p.summary is not None  # caller guarantee
+
+        def e(s: str) -> str:
+            return html.escape(s)
+
+        def attr(s: str) -> str:
+            return html.escape(s, quote=True)
+
+        type_label, priority_label = self._tag_label(p.summary)
+        parts: list[str] = []
+        parts.append("<!doctype html>")
+        parts.append('<html lang="ja"><head><meta charset="utf-8">')
+        parts.append(f"<title>{e(subject)}</title></head><body>")
+        parts.append(f'<h1><a href="{attr(p.article.url)}">{e(p.article.title)}</a></h1>')
+        parts.append(f"<p>タグ: {e(type_label)} / 優先度: {e(priority_label)}</p>")
+        parts.append("<h2>3 行要約</h2><ul>")
+        for s in p.summary.summary_lines:
+            parts.append(f"<li>{e(s)}</li>")
+        parts.append("</ul>")
+        parts.append("<h2>重要ポイント</h2><ul>")
+        for k in p.summary.key_points:
+            parts.append(f"<li>{e(k)}</li>")
+        parts.append("</ul></body></html>")
+        return "".join(parts)
+
+    def _render_failure_text(self, target_date: str, failed: list[ProcessedArticle]) -> str:
+        lines: list[str] = []
+        lines.append(f"{target_date} のダイジェスト — 処理失敗 {len(failed)} 件")
+        lines.append("")
+        for p in failed:
+            title_or_url = p.article.title or p.article.url
+            reason = p.error_reason or ""
+            lines.append(f"- {title_or_url} ({p.article.url}) — {reason}")
+        return "\n".join(lines) + "\n"
+
+    def _render_failure_html(
+        self, subject: str, target_date: str, failed: list[ProcessedArticle]
+    ) -> str:
+        def e(s: str) -> str:
+            return html.escape(s)
+
+        def attr(s: str) -> str:
+            return html.escape(s, quote=True)
+
+        parts: list[str] = []
+        parts.append("<!doctype html>")
+        parts.append('<html lang="ja"><head><meta charset="utf-8">')
+        parts.append(f"<title>{e(subject)}</title></head><body>")
+        parts.append(f"<h1>{e(target_date)} のダイジェスト — 処理失敗 {len(failed)} 件</h1>")
+        parts.append("<ul>")
+        for p in failed:
+            title_or_url = p.article.title or p.article.url
+            reason = p.error_reason or ""
+            parts.append(
+                f'<li><a href="{attr(p.article.url)}">{e(title_or_url)}</a> — {e(reason)}</li>'
+            )
+        parts.append("</ul></body></html>")
         return "".join(parts)
