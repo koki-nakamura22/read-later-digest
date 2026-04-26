@@ -13,8 +13,8 @@ venv/
 
 # AWS SAM
 .aws-sam/
-samconfig.toml
 samconfig.local.toml
+samconfig.toml
 
 # Test / Tooling
 .pytest_cache/

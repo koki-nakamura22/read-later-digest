@@ -83,7 +83,8 @@ def main() -> int:
         )
         return 1
 
-    data = tomllib.loads(SAMCONFIG.read_text(encoding="utf-8"))
+    with SAMCONFIG.open("rb") as f:
+        data = tomllib.load(f)
 
     env: dict[str, str] = {}
     for param_name, value in collect_overrides(data).items():
