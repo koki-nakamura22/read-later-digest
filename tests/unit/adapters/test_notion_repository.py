@@ -362,6 +362,27 @@ class TestListUnreadMissingProperties:
 
         assert articles[0].age_days is None
 
+    async def test_added_at_in_notion_created_time_property_form_is_parsed(
+        self, make_fake_client: Any
+    ) -> None:
+        # docs/functional-design.md specifies AddedAt as a Notion `created_time`
+        # property. Its API shape is {"created_time": "<iso>"} rather than the
+        # `date` shape {"date": {"start": "<iso>"}}. The adapter must accept
+        # both so users can keep their existing schema.
+        result = make_notion_page(page_id="ct-1")
+        result["properties"]["AddedAt"] = {
+            "type": "created_time",
+            "created_time": "2026-04-22T10:00:00.000Z",
+        }
+        page = make_query_response([result])
+        client = make_fake_client([page])
+        repo = _build_repo(client)
+
+        articles = await repo.list_unread()
+
+        assert len(articles) == 1
+        assert articles[0].added_at == datetime.fromisoformat("2026-04-22T10:00:00+00:00")
+
 
 class TestListUnreadClientSideSort:
     async def test_sorts_by_added_at_even_if_api_returns_unsorted(

@@ -294,15 +294,31 @@ class NotionRepository:
 
     @staticmethod
     def _extract_added_at(properties: dict[str, Any]) -> datetime | None:
+        # AddedAt is documented as a Notion `created_time` property in
+        # docs/functional-design.md, but a manually-managed `date` property is
+        # also supported so users who already track an "added at" date column
+        # don't need to migrate. The two property types have different shapes:
+        #   created_time -> {"created_time": "<iso>"}
+        #   date         -> {"date": {"start": "<iso>"}}
         added_prop = properties.get("AddedAt", {})
-        date_obj = added_prop.get("date")
-        if not isinstance(date_obj, dict):
+        if not isinstance(added_prop, dict):
             return None
-        start = date_obj.get("start")
-        if not isinstance(start, str):
+        raw: str | None = None
+        ct = added_prop.get("created_time")
+        if isinstance(ct, str):
+            raw = ct
+        else:
+            date_obj = added_prop.get("date")
+            if isinstance(date_obj, dict):
+                start = date_obj.get("start")
+                if isinstance(start, str):
+                    raw = start
+        if raw is None:
             return None
+        # Notion returns "Z" for UTC; fromisoformat needs +00:00 on Python <3.11
+        # but accepts "Z" on 3.11+. We're on 3.13 so this works as-is.
         try:
-            return datetime.fromisoformat(start)
+            return datetime.fromisoformat(raw)
         except ValueError:
             return None
 
