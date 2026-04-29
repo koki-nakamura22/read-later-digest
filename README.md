@@ -12,14 +12,18 @@ Notion DB に溜まる「後で読む」記事を、LLM で要約して日次で
 uv venv
 uv pip install -e ".[dev]"
 
-# samconfig.toml を作成し、自身の環境に合わせて値を編集
+# Notion DB を作成し、出力された database_id を控える(初回のみ)
+# 前提(Integration 作成・親ページへの招待)と詳細は scripts/README.md を参照
+uv run python scripts/create-notion-db.py --token <NOTION_TOKEN> --parent-page-id <PAGE_ID>
+
+# samconfig.toml を作成し、上で得た database_id を NotionDbId に貼る等、値を編集
 cp samconfig.toml.tmpl samconfig.toml
 
 # samconfig.toml から .env を生成
 uv run python scripts/gen-env.py
 ```
 
-`samconfig.toml` は環境変数の単一の出所として、ローカル実行 (`uv run`) と デプロイ (`sam deploy`) の両方を駆動する。詳細は [環境変数](#環境変数) を参照。
+`samconfig.toml` は環境変数の単一の出所として、ローカル実行 (`uv run`) と デプロイ (`sam deploy`) の両方を駆動する。詳細は [環境変数](#環境変数) を参照。各補助スクリプトの目的・引数・前提は [`scripts/README.md`](scripts/README.md) にまとめている。
 
 ### テスト
 
