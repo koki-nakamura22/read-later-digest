@@ -1,5 +1,7 @@
 # read-later-digest
 
+[![CI](https://github.com/koki-nakamura22/read-later-digest/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/koki-nakamura22/read-later-digest/actions/workflows/ci.yml)
+
 Notion DB に溜まる「後で読む」記事を、LLM で要約して日次でメール通知し、Notion の Status を自動更新するツール。
 
 詳細は `docs/` 配下のドキュメントを参照。
