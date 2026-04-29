@@ -1,6 +1,9 @@
 # read-later-digest
 
 [![CI](https://github.com/koki-nakamura22/read-later-digest/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/koki-nakamura22/read-later-digest/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+[![Python](https://img.shields.io/badge/python-%3E%3D3.13-blue.svg)](./pyproject.toml)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 Notion DB に溜まる「後で読む」記事を、LLM で要約して日次でメール通知し、Notion の Status を自動更新するツール。
 
