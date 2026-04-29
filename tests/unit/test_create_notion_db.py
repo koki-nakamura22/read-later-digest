@@ -85,9 +85,7 @@ class TestBuildPropertiesPayload:
         # Days between now and AddedAt — depended on by docs/functional-design.md
         # ("Age = AddedAt からの経過日数"). Hard-asserting the literal string
         # protects against accidental edits to the formula source.
-        assert age == {
-            "formula": {"expression": 'dateBetween(now(), prop("AddedAt"), "days")'}
-        }
+        assert age == {"formula": {"expression": 'dateBetween(now(), prop("AddedAt"), "days")'}}
 
 
 # ---------------------------------------------------------------------------
@@ -125,9 +123,7 @@ class TestResolveToken:
         monkeypatch.setenv("NOTION_TOKEN", "from-env")
         assert script._resolve_token("from-cli") == "from-cli"
 
-    def test_falls_back_to_env(
-        self, script: ModuleType, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_falls_back_to_env(self, script: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("NOTION_TOKEN", "from-env")
         assert script._resolve_token(None) == "from-env"
 
@@ -194,7 +190,9 @@ class TestMainDryRun:
 
         def _fail_on_notion(name: str, *args: object, **kwargs: object) -> object:
             if name.startswith("notion_client"):
-                raise AssertionError(f"notion_client must not be imported in --dry-run; got import of {name}")
+                raise AssertionError(
+                    f"notion_client must not be imported in --dry-run; got import of {name}"
+                )
             return original_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", _fail_on_notion)
@@ -204,9 +202,7 @@ class TestMainDryRun:
     def test_uses_custom_title(
         self, script: ModuleType, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        rc = script.main(
-            ["--parent-page-id", "p", "--title", "My Reading Queue", "--dry-run"]
-        )
+        rc = script.main(["--parent-page-id", "p", "--title", "My Reading Queue", "--dry-run"])
         assert rc == 0
         body = json.loads(capsys.readouterr().out)
         assert body["title"][0]["text"]["content"] == "My Reading Queue"
