@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict
-from typing import Any
+from typing import Any, cast
 
 import boto3  # type: ignore[import-untyped]
 import httpx
@@ -12,7 +12,7 @@ from notion_client import Client as NotionClient
 from read_later_digest.adapters.article_fetcher import ArticleFetcher
 from read_later_digest.adapters.llm.claude import ClaudeLLMClient
 from read_later_digest.adapters.mailer.base import Mailer
-from read_later_digest.adapters.mailer.ses import SesMailer
+from read_later_digest.adapters.mailer.ses import SesClientLike, SesMailer
 from read_later_digest.adapters.notifier.base import Notifier
 from read_later_digest.adapters.notifier.slack import SlackNotifier
 from read_later_digest.adapters.notion_repository import NotionClientLike, NotionRepository
@@ -66,7 +66,7 @@ async def _run(config: Config) -> RunResult:
     mailer: Mailer | None = None
     if NotificationChannel.MAIL in config.notification_channels:
         mailer = SesMailer(
-            client=boto3.client("ses", region_name=config.aws_region),
+            client=cast(SesClientLike, boto3.client("ses", region_name=config.aws_region)),
             source=config.mail_from,
         )
     notifier: Notifier | None = None

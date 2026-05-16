@@ -12,7 +12,9 @@ from read_later_digest.exceptions import LLMError
 from read_later_digest.logging_setup import logger
 
 try:
-    from anthropic import RateLimitError as _AnthropicRateLimitError
+    from anthropic import (
+        RateLimitError as _AnthropicRateLimitError,  # pyright: ignore[reportAssignmentType]
+    )
 except ImportError:  # pragma: no cover
 
     class _AnthropicRateLimitError(Exception):  # type: ignore[no-redef]

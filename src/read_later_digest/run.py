@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from dataclasses import asdict
+from typing import cast
 
 import boto3  # type: ignore[import-untyped]
 import httpx
@@ -11,7 +12,7 @@ from notion_client import Client as NotionClient
 
 from read_later_digest.adapters.article_fetcher import ArticleFetcher
 from read_later_digest.adapters.llm.claude import ClaudeLLMClient
-from read_later_digest.adapters.mailer.ses import SesMailer
+from read_later_digest.adapters.mailer.ses import SesClientLike, SesMailer
 from read_later_digest.adapters.notion_repository import NotionClientLike, NotionRepository
 from read_later_digest.config import Config, NotificationChannel
 from read_later_digest.domain.digest_builder import DigestBuilder
@@ -66,7 +67,7 @@ async def _run(config: Config, *, dry_run: bool) -> RunResult:
             initial_backoff_sec=config.llm_initial_backoff_sec,
         )
         mailer = SesMailer(
-            client=boto3.client("ses", region_name=config.aws_region),
+            client=cast(SesClientLike, boto3.client("ses", region_name=config.aws_region)),
             source=config.mail_from,
         )
         orchestrator = Orchestrator(
