@@ -5,7 +5,6 @@ import ipaddress
 import os
 import socket
 from collections.abc import Callable
-from importlib.metadata import version as _pkg_version
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -14,14 +13,14 @@ import trafilatura
 from digestkit.extractors import ExtractionError
 from digestkit.types import Item
 
+from read_later_digest import __version__
 from read_later_digest.domain.models import FetchFailureReason
 from read_later_digest.logging_setup import logger
 
 ALLOWED_SCHEMES = ("http", "https")
-_VERSION = _pkg_version("read-later-digest")
 DEFAULT_USER_AGENT = os.getenv(
     "FETCH_USER_AGENT",
-    f"read-later-digest/{_VERSION} (+https://github.com/koki-nakamura22/read-later-digest)",
+    f"read-later-digest/{__version__} (+https://github.com/koki-nakamura22/read-later-digest)",
 )
 DEFAULT_TIMEOUT_SEC = 15.0
 DEFAULT_BODY_MAX_CHARS = 30_000

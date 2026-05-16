@@ -34,7 +34,7 @@ def test_requirements_txt_matches_uv_export() -> None:
     )
     expected = proc.stdout
     actual = REQUIREMENTS_PATH.read_text(encoding="utf-8")
-    expected_norm = _normalize(expected)
+    expected_norm = _rewrite_vendor_path(_normalize(expected))
     actual_norm = _normalize(actual)
     assert actual_norm == expected_norm, (
         "src/requirements.txt is stale. Run: uv run python scripts/sync-requirements.py"
@@ -51,3 +51,13 @@ def _normalize(text: str) -> str:
         for line in text.splitlines()
         if not line.startswith("#    uv export") and not line.startswith((" ", "\t"))
     )
+
+
+def _rewrite_vendor_path(text: str) -> str:
+    """Mirror ``scripts/sync-requirements.py:_rewrite_vendor_path``.
+
+    The script post-processes ``uv export`` output so the SAM build context
+    (CodeUri = src/) sees the wheel at ``./vendor/...whl`` instead of the
+    project-root-relative ``./src/vendor/...whl`` that uv would emit.
+    """
+    return text.replace("./src/vendor/", "./vendor/")

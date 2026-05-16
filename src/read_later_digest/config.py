@@ -1,10 +1,10 @@
 import os
 from dataclasses import dataclass
-from importlib.metadata import version as _pkg_version
+
+from read_later_digest import __version__
 
 _DEFAULT_FETCH_USER_AGENT: str = (
-    f"read-later-digest/{_pkg_version('read-later-digest')}"
-    " (+https://github.com/koki-nakamura22/read-later-digest)"
+    f"read-later-digest/{__version__} (+https://github.com/koki-nakamura22/read-later-digest)"
 )
 
 
