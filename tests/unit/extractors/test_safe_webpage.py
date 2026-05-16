@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import socket
 from collections.abc import Callable
 from typing import Any
 
 import httpx
 import pytest
 import respx
+from digestkit.extractors import ExtractionError
 from digestkit.types import Item
 
 from read_later_digest.domain.models import FetchFailureReason
@@ -150,6 +152,7 @@ class TestExtractTimeoutAndNetwork:
             with pytest.raises(FetchFailure) as exc:
                 extractor.extract(_item())
         assert exc.value.reason is FetchFailureReason.TIMEOUT
+        assert exc.value.status_code is None
 
     def test_connect_error_raises_network_failure(self) -> None:
         # Arrange
@@ -292,6 +295,50 @@ class TestExtractSsrfGuard:
         assert exc.value.reason is FetchFailureReason.BLOCKED_HOST
         assert respx.calls.call_count == 0
 
+    def test_localhost_with_trailing_dot_is_blocked(self) -> None:
+        # Arrange — "localhost." is a valid FQDN alias; implementation short-circuits it
+        with httpx.Client() as client, respx.mock:
+            extractor = _build_extractor(client, host_resolver=_public_ip_resolver)
+            # Act / Assert
+            with pytest.raises(FetchFailure) as exc:
+                extractor.extract(_item("https://localhost./x"))
+        assert exc.value.reason is FetchFailureReason.BLOCKED_HOST
+
+    def test_reserved_ip_is_blocked(self) -> None:
+        # Arrange — 240.0.0.0/4 is reserved per ipaddress.ip_address.is_reserved
+        with httpx.Client() as client, respx.mock:
+            extractor = _build_extractor(client, host_resolver=lambda _host: ["240.0.0.1"])
+            # Act / Assert
+            with pytest.raises(FetchFailure) as exc:
+                extractor.extract(_item("https://reserved.example/x"))
+        assert exc.value.reason is FetchFailureReason.BLOCKED_HOST
+        assert respx.calls.call_count == 0
+
+    def test_resolver_raising_gaierror_blocks_host(self) -> None:
+        # Arrange — resolver raises gaierror (DNS failure) → blocked, different path from []
+        def _gaierror_resolver(_host: str) -> list[str]:
+            raise socket.gaierror("name or service not known")
+
+        with httpx.Client() as client, respx.mock:
+            extractor = _build_extractor(client, host_resolver=_gaierror_resolver)
+            # Act / Assert
+            with pytest.raises(FetchFailure) as exc:
+                extractor.extract(_item("https://unresolvable.example/x"))
+        assert exc.value.reason is FetchFailureReason.BLOCKED_HOST
+
+    def test_resolver_returning_invalid_ip_string_does_not_block(self) -> None:
+        # Arrange — resolver returns a non-IP string; ValueError → continue in _is_blocked_host
+        # → no valid address blocks → host passes through (not blocked)
+        with httpx.Client() as client, respx.mock:
+            respx.get("https://weird.example/x").mock(
+                return_value=httpx.Response(200, html=SAMPLE_HTML)
+            )
+            extractor = _build_extractor(client, host_resolver=lambda _host: ["not-an-ip"])
+            # Act
+            result = extractor.extract(_item("https://weird.example/x"))
+        # Assert
+        assert isinstance(result, str)
+
     def test_blocked_host_emits_warning_log(
         self, captured_extractor_warnings: list[tuple[str, dict[str, Any]]]
     ) -> None:
@@ -352,3 +399,51 @@ class TestExtractModuleDefaults:
 
     def test_default_timeout_matches_design(self) -> None:
         assert DEFAULT_TIMEOUT_SEC == 15.0
+
+
+class TestFetchFailureException:
+    def test_is_subclass_of_extraction_error(self) -> None:
+        # AC4: FetchFailure must satisfy digestkit ExtractionError hierarchy
+        exc = FetchFailure(FetchFailureReason.TIMEOUT)
+        assert isinstance(exc, ExtractionError)
+
+    def test_message_includes_reason_value(self) -> None:
+        exc = FetchFailure(FetchFailureReason.INVALID_SCHEME)
+        assert "invalid_scheme" in str(exc)
+
+    def test_message_includes_http_status_when_set(self) -> None:
+        exc = FetchFailure(FetchFailureReason.HTTP_4XX, status_code=404)
+        assert "404" in str(exc)
+
+    def test_message_omits_status_when_none(self) -> None:
+        exc = FetchFailure(FetchFailureReason.TIMEOUT)
+        assert "HTTP" not in str(exc)
+
+    def test_status_code_stored_as_attribute(self) -> None:
+        exc = FetchFailure(FetchFailureReason.HTTP_5XX, status_code=503)
+        assert exc.status_code == 503
+
+    def test_reason_stored_as_attribute(self) -> None:
+        exc = FetchFailure(FetchFailureReason.BLOCKED_HOST)
+        assert exc.reason is FetchFailureReason.BLOCKED_HOST
+
+
+class TestExtractorClientLifecycle:
+    def test_close_with_owned_client_closes_internal_client(self) -> None:
+        # Arrange — no external client → extractor owns the httpx.Client
+        extractor = SafeWebPageExtractor(host_resolver=_public_ip_resolver)
+        internal_client = extractor._client
+        # Act
+        extractor.close()
+        # Assert
+        assert internal_client.is_closed
+
+    def test_close_with_external_client_does_not_close_it(self) -> None:
+        # Arrange — external client is passed → extractor must not close it
+        client = httpx.Client()
+        extractor = SafeWebPageExtractor(client=client, host_resolver=_public_ip_resolver)
+        # Act
+        extractor.close()
+        # Assert: caller still owns and can close the client
+        assert not client.is_closed
+        client.close()
