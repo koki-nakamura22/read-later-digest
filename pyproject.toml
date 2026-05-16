@@ -28,7 +28,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-digestkit = { path = "vendor/digestkit-0.1.0-py3-none-any.whl" }
+digestkit = { path = "src/vendor/digestkit-0.1.0-py3-none-any.whl" }
 
 [build-system]
 requires = ["hatchling"]

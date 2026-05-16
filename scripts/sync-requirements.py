@@ -43,7 +43,7 @@ def main() -> int:
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
         return proc.returncode
-    TARGET.write_text(_strip_annotations(proc.stdout), encoding="utf-8")
+    TARGET.write_text(_rewrite_vendor_path(_strip_annotations(proc.stdout)), encoding="utf-8")
     print(f"wrote {TARGET.relative_to(ROOT)}")
     return 0
 
@@ -58,6 +58,19 @@ def _strip_annotations(text: str) -> str:
     """
     kept = [line for line in text.splitlines() if line[:1] not in (" ", "\t")]
     return "\n".join(kept) + "\n"
+
+
+def _rewrite_vendor_path(text: str) -> str:
+    """Rewrite ``./src/vendor/...`` → ``./vendor/...`` for SAM build context.
+
+    ``pyproject.toml`` references the digestkit wheel at ``src/vendor/...`` so
+    ``uv sync`` (run from the project root) can find it. But ``sam build``
+    mounts only ``CodeUri: ./src`` into the build container, making the wheel
+    appear at ``<build_dir>/vendor/...whl``. The ``requirements.txt`` (which
+    lives inside ``src/``) is consumed by pip with CWD = build_dir, so the
+    path needs to be ``./vendor/...whl`` — without the ``src/`` prefix.
+    """
+    return text.replace("./src/vendor/", "./vendor/")
 
 
 if __name__ == "__main__":
