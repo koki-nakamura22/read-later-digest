@@ -103,6 +103,7 @@ class TestOrderedSinkWriteFailure:
         with pytest.raises(RuntimeError):
             ordered.write(_digest(), _item())
         # Assert
+        s1.write.assert_called_once()
         s2.write.assert_not_called()
 
     def test_second_sink_failure_first_sink_was_called(self) -> None:
@@ -114,8 +115,9 @@ class TestOrderedSinkWriteFailure:
         # Act
         with pytest.raises(ValueError, match="bad value"):
             ordered.write(digest, item)
-        # Assert
+        # Assert — s1 was called (passed), s2 was called (raised), stops there
         s1.write.assert_called_once_with(digest, item)
+        s2.write.assert_called_once()
 
     def test_second_sink_failure_propagates_exception(self) -> None:
         # Arrange
