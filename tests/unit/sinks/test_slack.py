@@ -4,9 +4,20 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
+from digestkit.digester import FailureInfo
 from digestkit.types import Digest, Item
 
+from read_later_digest.domain.models import FetchFailureReason
 from read_later_digest.sinks.slack import SlackBlockKitSink
+
+
+class _FetchFailureError(Exception):
+    """Test-local stub for an error that has a FetchFailureReason attribute."""
+
+    def __init__(self, reason: FetchFailureReason, status_code: int) -> None:
+        self.reason = reason
+        self.status_code = status_code
+
 
 # ---------- helpers ----------
 
@@ -348,3 +359,209 @@ class TestSlackBlockKitSinkNon2xx:
         # Act / Assert
         with pytest.raises(httpx.ConnectError):
             sink.write(_digest(), _item_with_meta())
+
+
+# ---------- send_failure_summary ----------
+
+
+class TestSendFailureSummary:
+    def test_posts_aggregated_payload(self) -> None:
+        # Arrange
+        sink, client = _make_sink_with_mock()
+        failures = [
+            FailureInfo(
+                item=Item(
+                    id="p1",
+                    payload="https://example.com",
+                    metadata={"title": "失敗記事", "url": "https://example.com"},
+                ),
+                stage="extract",
+                error=_FetchFailureError(reason=FetchFailureReason.HTTP_4XX, status_code=404),
+            ),
+        ]
+        # Act
+        sink.send_failure_summary(failures, target_date="2026-05-16")
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert "処理失敗 1 件" in blocks[0]["text"]["text"]
+        assert "失敗記事" in blocks[1]["text"]["text"]
+
+    def test_skips_when_empty(self) -> None:
+        # Arrange
+        client = MagicMock(spec=httpx.Client)
+        sink = SlackBlockKitSink(webhook_url=_WEBHOOK_URL, client=client)
+        # Act
+        sink.send_failure_summary([], target_date="2026-05-16")
+        # Assert — no HTTP call made
+        client.post.assert_not_called()
+
+    def test_header_block_type_is_header(self) -> None:
+        # Arrange
+        sink, client = _make_sink_with_mock()
+        failures = [
+            FailureInfo(
+                item=Item(id="p1", payload="https://example.com", metadata={}),
+                stage="extract",
+                error=_FetchFailureError(reason=FetchFailureReason.TIMEOUT, status_code=0),
+            ),
+        ]
+        # Act
+        sink.send_failure_summary(failures, target_date="2026-05-16")
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert blocks[0]["type"] == "header"
+
+    def test_section_block_contains_reason_value(self) -> None:
+        # Arrange
+        sink, client = _make_sink_with_mock()
+        failures = [
+            FailureInfo(
+                item=Item(
+                    id="p1",
+                    payload="https://example.com",
+                    metadata={"title": "記事", "url": "https://example.com"},
+                ),
+                stage="extract",
+                error=_FetchFailureError(reason=FetchFailureReason.HTTP_4XX, status_code=404),
+            ),
+        ]
+        # Act
+        sink.send_failure_summary(failures, target_date="2026-05-16")
+        # Assert — reason.value = "http_4xx"
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert "http_4xx" in blocks[1]["text"]["text"]
+
+    def test_falls_back_to_str_error_when_no_reason(self) -> None:
+        # Arrange — error without reason attribute
+        sink, client = _make_sink_with_mock()
+        failures = [
+            FailureInfo(
+                item=Item(id="p1", payload="https://example.com", metadata={}),
+                stage="extract",
+                error=ValueError("something went wrong"),
+            ),
+        ]
+        # Act
+        sink.send_failure_summary(failures, target_date="2026-05-16")
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert "something went wrong" in blocks[1]["text"]["text"]
+
+    def test_falls_back_payload_when_no_title_or_url_in_metadata(self) -> None:
+        # Arrange — metadata has neither title nor url
+        sink, client = _make_sink_with_mock()
+        failures = [
+            FailureInfo(
+                item=Item(id="p1", payload="https://fallback.example.com", metadata={}),
+                stage="extract",
+                error=_FetchFailureError(reason=FetchFailureReason.NETWORK, status_code=0),
+            ),
+        ]
+        # Act
+        sink.send_failure_summary(failures, target_date="2026-05-16")
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert "https://fallback.example.com" in blocks[1]["text"]["text"]
+
+    def test_metadata_none_uses_payload(self) -> None:
+        # Arrange — metadata is None
+        sink, client = _make_sink_with_mock()
+        failures = [
+            FailureInfo(
+                item=Item(id="p1", payload="https://payload.example.com", metadata=None),
+                stage="extract",
+                error=ValueError("err"),
+            ),
+        ]
+        # Act
+        sink.send_failure_summary(failures, target_date="2026-05-16")
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert "https://payload.example.com" in blocks[1]["text"]["text"]
+
+    def test_multiple_failures_all_listed(self) -> None:
+        # Arrange — 2 failures → both appear in section text
+        sink, client = _make_sink_with_mock()
+        failures = [
+            FailureInfo(
+                item=Item(
+                    id="p1",
+                    payload="https://a.example.com",
+                    metadata={"title": "記事A", "url": "https://a.example.com"},
+                ),
+                stage="extract",
+                error=_FetchFailureError(reason=FetchFailureReason.HTTP_4XX, status_code=404),
+            ),
+            FailureInfo(
+                item=Item(
+                    id="p2",
+                    payload="https://b.example.com",
+                    metadata={"title": "記事B", "url": "https://b.example.com"},
+                ),
+                stage="extract",
+                error=_FetchFailureError(reason=FetchFailureReason.HTTP_5XX, status_code=503),
+            ),
+        ]
+        # Act
+        sink.send_failure_summary(failures, target_date="2026-05-16")
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert "処理失敗 2 件" in blocks[0]["text"]["text"]
+        section_text = blocks[1]["text"]["text"]
+        assert "記事A" in section_text
+        assert "記事B" in section_text
+
+    def test_raises_for_status_called(self) -> None:
+        # Arrange
+        sink, client = _make_sink_with_mock()
+        failures = [
+            FailureInfo(
+                item=Item(id="p1", payload="https://example.com", metadata={}),
+                stage="extract",
+                error=ValueError("err"),
+            ),
+        ]
+        # Act
+        sink.send_failure_summary(failures, target_date="2026-05-16")
+        # Assert
+        client.post.return_value.raise_for_status.assert_called_once()
+
+
+# ---------- send_heartbeat ----------
+
+
+class TestSendHeartbeat:
+    def test_posts_zero_item_message(self) -> None:
+        # Arrange
+        sink, client = _make_sink_with_mock()
+        # Act
+        sink.send_heartbeat(target_date="2026-05-16")
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert "本日の未読 0 件" in blocks[0]["text"]["text"]
+
+    def test_block_type_is_section(self) -> None:
+        # Arrange
+        sink, client = _make_sink_with_mock()
+        # Act
+        sink.send_heartbeat(target_date="2026-05-16")
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert blocks[0]["type"] == "section"
+
+    def test_target_date_in_message(self) -> None:
+        # Arrange
+        sink, client = _make_sink_with_mock()
+        # Act
+        sink.send_heartbeat(target_date="2099-12-31")
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert "2099-12-31" in blocks[0]["text"]["text"]
+
+    def test_raises_for_status_called(self) -> None:
+        # Arrange
+        sink, client = _make_sink_with_mock()
+        # Act
+        sink.send_heartbeat(target_date="2026-05-16")
+        # Assert
+        client.post.return_value.raise_for_status.assert_called_once()
