@@ -58,13 +58,16 @@ def _item_with_meta(
 
 def _make_sink_with_mock(
     webhook_url: str = _WEBHOOK_URL,
+    subject_prefix: str = "[read-later-digest]",
 ) -> tuple[SlackBlockKitSink, MagicMock]:
     """SlackBlockKitSink と mock httpx.Client を返す."""
     client = MagicMock(spec=httpx.Client)
     response = MagicMock()
     response.raise_for_status.return_value = None
     client.post.return_value = response
-    return SlackBlockKitSink(webhook_url=webhook_url, client=client), client
+    return SlackBlockKitSink(
+        webhook_url=webhook_url, client=client, subject_prefix=subject_prefix
+    ), client
 
 
 # ---------- __init__ ----------
@@ -511,6 +514,88 @@ class TestSendFailureSummary:
         assert "記事A" in section_text
         assert "記事B" in section_text
 
+    def test_exactly_two_blocks_returned(self) -> None:
+        # Arrange — failure_blocks always: [header, section]
+        sink, client = _make_sink_with_mock()
+        failures = [
+            FailureInfo(
+                item=Item(id="p1", payload="https://example.com", metadata={}),
+                stage="extract",
+                error=ValueError("err"),
+            ),
+        ]
+        # Act
+        sink.send_failure_summary(failures, target_date="2026-05-16")
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert len(blocks) == 2
+
+    def test_reason_with_no_value_attr_uses_str_reason(self) -> None:
+        # Arrange — error.reason is a plain string (no .value attribute)
+        class _ErrWithStrReasonError(Exception):
+            reason = "plain-string-reason"
+
+        sink, client = _make_sink_with_mock()
+        failures = [
+            FailureInfo(
+                item=Item(
+                    id="p1",
+                    payload="https://example.com",
+                    metadata={"title": "記事", "url": "https://example.com"},
+                ),
+                stage="extract",
+                error=_ErrWithStrReasonError("err"),
+            ),
+        ]
+        # Act
+        sink.send_failure_summary(failures, target_date="2026-05-16")
+        # Assert — str(reason) used, not reason.value
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert "plain-string-reason" in blocks[1]["text"]["text"]
+
+    def test_title_absent_url_present_uses_url_as_label(self) -> None:
+        # Arrange — metadata has url but not title; url is used as both label and link
+        sink, client = _make_sink_with_mock()
+        failures = [
+            FailureInfo(
+                item=Item(
+                    id="p1",
+                    payload="https://payload.example.com",
+                    metadata={"url": "https://meta.example.com"},
+                ),
+                stage="extract",
+                error=ValueError("err"),
+            ),
+        ]
+        # Act
+        sink.send_failure_summary(failures, target_date="2026-05-16")
+        # Assert — url appears as both label and link target
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        section_text = blocks[1]["text"]["text"]
+        assert "https://meta.example.com" in section_text
+
+    def test_title_present_url_absent_uses_payload_as_url(self) -> None:
+        # Arrange — metadata has title but not url; payload is used as link target
+        sink, client = _make_sink_with_mock()
+        failures = [
+            FailureInfo(
+                item=Item(
+                    id="p1",
+                    payload="https://payload.example.com",
+                    metadata={"title": "タイトルのみ"},
+                ),
+                stage="extract",
+                error=ValueError("err"),
+            ),
+        ]
+        # Act
+        sink.send_failure_summary(failures, target_date="2026-05-16")
+        # Assert — title as label, payload as link url
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        section_text = blocks[1]["text"]["text"]
+        assert "タイトルのみ" in section_text
+        assert "https://payload.example.com" in section_text
+
     def test_raises_for_status_called(self) -> None:
         # Arrange
         sink, client = _make_sink_with_mock()
@@ -557,6 +642,24 @@ class TestSendHeartbeat:
         # Assert
         blocks = client.post.call_args.kwargs["json"]["blocks"]
         assert "2099-12-31" in blocks[0]["text"]["text"]
+
+    def test_exactly_one_block_returned(self) -> None:
+        # Arrange — heartbeat always emits exactly 1 block
+        sink, client = _make_sink_with_mock()
+        # Act
+        sink.send_heartbeat(target_date="2026-05-16")
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert len(blocks) == 1
+
+    def test_subject_prefix_in_message(self) -> None:
+        # Arrange — custom subject_prefix should appear in heartbeat text
+        sink, client = _make_sink_with_mock(subject_prefix="[custom-prefix]")
+        # Act
+        sink.send_heartbeat(target_date="2026-05-16")
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert "[custom-prefix]" in blocks[0]["text"]["text"]
 
     def test_raises_for_status_called(self) -> None:
         # Arrange
