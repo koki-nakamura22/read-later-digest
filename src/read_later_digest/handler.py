@@ -1,98 +1,56 @@
 from __future__ import annotations
 
-import asyncio
+import logging
 from dataclasses import asdict
-from typing import Any, cast
+from typing import Any
 
-import boto3  # type: ignore[import-untyped]
-import httpx
-from anthropic import AsyncAnthropic
-from notion_client import Client as NotionClient
+from aws_lambda_powertools import Logger
 
-from read_later_digest.adapters.article_fetcher import ArticleFetcher
-from read_later_digest.adapters.llm.claude import ClaudeLLMClient
-from read_later_digest.adapters.mailer.base import Mailer
-from read_later_digest.adapters.mailer.ses import SesClientLike, SesMailer
-from read_later_digest.adapters.notifier.base import Notifier
-from read_later_digest.adapters.notifier.slack import SlackNotifier
-from read_later_digest.adapters.notion_repository import NotionClientLike, NotionRepository
-from read_later_digest.config import Config, NotificationChannel
-from read_later_digest.domain.digest_builder import DigestBuilder
-from read_later_digest.domain.models import RunResult
+from read_later_digest.config import Config
+from read_later_digest.domain.models import ReadLaterRunResult
 from read_later_digest.logging_setup import logger
-from read_later_digest.orchestrator import Orchestrator
+from read_later_digest.wiring import build_digester
 
 
-def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
-    """AWS Lambda entrypoint invoked by EventBridge Scheduler.
+def _attach_powertools_handler_to_digestkit(powertools_logger: Logger) -> None:
+    """digestkit の全 logger を Powertools handler に流す.
 
-    Builds the orchestrator from environment-derived `Config`, runs the daily batch,
-    logs a structured summary, and returns the RunResult fields. Re-raises on hard
-    failures so EventBridge / CloudWatch surface the error.
+    Lambda コンテナ再利用で複数回呼ばれても重複 attach しないよう冪等ガード.
+    子 logger (`digestkit.summarizers.*` 等) は独自 handler をクリア + propagate=True.
     """
+    digestkit_root = logging.getLogger("digestkit")
+    if digestkit_root.handlers:
+        return  # 冪等
+
+    for name in list(logging.root.manager.loggerDict):
+        if name.startswith("digestkit."):
+            sublogger = logging.getLogger(name)
+            sublogger.handlers.clear()
+            sublogger.propagate = True
+
+    for h in powertools_logger.handlers:
+        digestkit_root.addHandler(h)
+    digestkit_root.setLevel(logging.INFO)
+    digestkit_root.propagate = False
+
+
+@logger.inject_lambda_context
+def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
+    """AWS Lambda entrypoint invoked by EventBridge Scheduler."""
     logger.info("batch invoked", extra={"event_keys": list(event.keys()) if event else []})
     config = Config.from_env()
-    result = asyncio.run(_run(config))
+    result = _run(config)
     summary = asdict(result)
     logger.info("batch completed", extra=summary)
     return summary
 
 
-async def _run(config: Config) -> RunResult:
-    notion_client: NotionClientLike = NotionClient(auth=config.notion_token)  # type: ignore[assignment]
-    notion_repo = NotionRepository(
-        client=notion_client,
-        db_id=config.notion_db_id,
-        status_property=config.notion_status_property,
-        status_unread=config.notion_status_unread,
-        status_processed=config.notion_status_processed,
-        type_property=config.notion_type_property,
-        priority_property=config.notion_priority_property,
-    )
-    http_client = httpx.AsyncClient(timeout=config.fetch_timeout_sec)
-    fetcher = ArticleFetcher(
-        client=http_client,
-        timeout_sec=config.fetch_timeout_sec,
-        body_max_chars=config.llm_body_max_chars,
-    )
-    llm = ClaudeLLMClient(
-        client=AsyncAnthropic(api_key=config.anthropic_api_key),  # type: ignore[arg-type]
-        model=config.llm_model,
-        body_max_chars=config.llm_body_max_chars,
-        max_rate_limit_retries=config.llm_max_rate_limit_retries,
-        initial_backoff_sec=config.llm_initial_backoff_sec,
-    )
-
-    mailer: Mailer | None = None
-    if NotificationChannel.MAIL in config.notification_channels:
-        mailer = SesMailer(
-            client=cast(SesClientLike, boto3.client("ses", region_name=config.aws_region)),
-            source=config.mail_from,
-        )
-    notifier: Notifier | None = None
-    if NotificationChannel.SLACK in config.notification_channels:
-        # Config.from_env enforces SLACK_WEBHOOK_URL when slack is enabled,
-        # so the assertion just narrows the Optional for type checkers.
-        assert config.slack_webhook_url is not None
-        notifier = SlackNotifier(
-            client=http_client,
-            webhook_url=config.slack_webhook_url,
-            timeout_sec=config.slack_timeout_sec,
-        )
-
-    orchestrator = Orchestrator(
-        notion=notion_repo,
-        fetcher=fetcher,
-        llm=llm,
-        digest_builder=DigestBuilder(),
-        mailer=mailer,
-        mail_to=config.mail_to if mailer is not None else None,
-        notifier=notifier,
-        mail_granularity=config.notify_granularity_mail,
-        notifier_granularity=config.notify_granularity_slack,
-        llm_concurrency=config.llm_concurrency,
-    )
+def _run(config: Config) -> ReadLaterRunResult:
+    _attach_powertools_handler_to_digestkit(logger)
+    digester = build_digester(config)
     try:
-        return await orchestrator.run()
+        return digester.run()
     finally:
-        await http_client.aclose()
+        close = getattr(digester.extractor, "close", None)
+        if close is not None:
+            close()
