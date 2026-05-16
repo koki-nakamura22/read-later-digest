@@ -1,36 +1,11 @@
 import os
-from dataclasses import dataclass, field
-from enum import StrEnum
+from dataclasses import dataclass
 
+from read_later_digest import __version__
 
-class NotificationChannel(StrEnum):
-    """Notification delivery channel selectable via NOTIFY_CHANNELS."""
-
-    MAIL = "mail"
-    SLACK = "slack"
-
-
-class NotifyGranularity(StrEnum):
-    """Notification fan-out granularity selectable via NOTIFY_GRANULARITY.
-
-    `digest` (default) sends one combined message per channel per run, matching
-    the historical behavior. `per_article` sends one message per successfully
-    summarized article (plus, when applicable, one aggregated failure summary).
-    """
-
-    DIGEST = "digest"
-    PER_ARTICLE = "per_article"
-
-
-def _parse_notify_granularity(raw: str) -> NotifyGranularity:
-    """Parse a NOTIFY_GRANULARITY_* value into the enum, raising on unknown values."""
-    token = raw.strip().lower()
-    if not token:
-        raise RuntimeError("notify granularity value is empty")
-    valid = {g.value for g in NotifyGranularity}
-    if token not in valid:
-        raise RuntimeError(f"unknown notify granularity value {token!r} (valid: {sorted(valid)})")
-    return NotifyGranularity(token)
+_DEFAULT_FETCH_USER_AGENT: str = (
+    f"read-later-digest/{__version__} (+https://github.com/koki-nakamura22/read-later-digest)"
+)
 
 
 def _resolve_secret(name: str) -> str:
@@ -38,30 +13,6 @@ def _resolve_secret(name: str) -> str:
     if not value:
         raise RuntimeError(f"required secret '{name}' is not set")
     return value
-
-
-def _parse_mail_to(raw: str) -> list[str]:
-    return [item.strip() for item in raw.split(",") if item.strip()]
-
-
-def _parse_notification_channels(raw: str) -> frozenset[NotificationChannel]:
-    """Parse a CSV like 'mail,slack' into a non-empty channel set.
-
-    Whitespace is trimmed and case is normalized to lower-case.
-    Raises RuntimeError on empty input or unknown channel names so
-    misconfiguration fails at startup rather than silently dropping notifications.
-    """
-    tokens = [t.strip().lower() for t in raw.split(",") if t.strip()]
-    if not tokens:
-        raise RuntimeError("required env 'NOTIFY_CHANNELS' is empty")
-
-    valid = {c.value for c in NotificationChannel}
-    unknown = sorted({t for t in tokens if t not in valid})
-    if unknown:
-        raise RuntimeError(
-            f"unknown notification channels in NOTIFY_CHANNELS: {unknown} (valid: {sorted(valid)})"
-        )
-    return frozenset(NotificationChannel(t) for t in tokens)
 
 
 @dataclass(frozen=True)
@@ -83,31 +34,6 @@ class Config:
     anthropic_api_key: str
     """Anthropic API key used to call Claude for summarization.
     Source: ``ANTHROPIC_API_KEY`` (required, secret)."""
-
-    notification_channels: frozenset[NotificationChannel]
-    """Enabled notification delivery channels. Parsed from a CSV like ``mail,slack``.
-    Source: ``NOTIFY_CHANNELS`` (optional, default: ``mail``)."""
-
-    notify_granularity_mail: NotifyGranularity = NotifyGranularity.DIGEST
-    """Mail-channel fan-out granularity. ``digest`` sends one combined message
-    per run (legacy behavior). ``per_article`` sends one message per
-    successfully summarized article (plus an aggregated failure summary when
-    failures exist). Applies only to the mail transport; Slack is governed by
-    ``notify_granularity_slack`` so the two can differ.
-    Source: ``NOTIFY_GRANULARITY_MAIL`` (optional, default: ``digest``)."""
-
-    notify_granularity_slack: NotifyGranularity = NotifyGranularity.DIGEST
-    """Slack-channel fan-out granularity. Same semantics as
-    ``notify_granularity_mail`` but applied to the Slack notifier transport.
-    Source: ``NOTIFY_GRANULARITY_SLACK`` (optional, default: ``digest``)."""
-
-    mail_from: str = ""
-    """Sender email address for digest mails. Required only when the ``mail``
-    channel is enabled. Source: ``MAIL_FROM``."""
-
-    mail_to: list[str] = field(default_factory=list)
-    """Recipient email addresses for digest mails (CSV is split by comma).
-    Required only when the ``mail`` channel is enabled. Source: ``MAIL_TO``."""
 
     notion_status_property: str = "Status"
     """Name of the Notion property representing the read/processed status.
@@ -146,66 +72,37 @@ class Config:
     """Initial backoff (seconds) for exponential retry on LLM rate-limit errors.
     Source: ``LLM_INITIAL_BACKOFF_SEC`` (optional, default: ``1.0``)."""
 
-    llm_concurrency: int = 5
-    """Maximum number of concurrent LLM requests during digest building.
-    Source: ``LLM_CONCURRENCY`` (optional, default: ``5``)."""
-
     fetch_timeout_sec: float = 15.0
     """HTTP timeout (seconds) for fetching the URL body of each entry.
     Source: ``FETCH_TIMEOUT_SEC`` (optional, default: ``15.0``)."""
 
-    aws_region: str = "ap-northeast-1"
-    """AWS region used for SES (mail) and other AWS clients.
-    Source: ``AWS_REGION`` (optional, default: ``ap-northeast-1``)."""
-
     slack_webhook_url: str | None = None
-    """Slack Incoming Webhook URL for digest delivery. Required only when the
-    ``slack`` channel is enabled. Source: ``SLACK_WEBHOOK_URL`` (secret)."""
+    """Slack Incoming Webhook URL for digest delivery.
+    Source: ``SLACK_WEBHOOK_URL`` (secret)."""
 
     slack_timeout_sec: float = 10.0
     """HTTP timeout (seconds) for Slack webhook POST requests.
     Source: ``SLACK_TIMEOUT_SEC`` (optional, default: ``10.0``)."""
 
+    fetch_user_agent: str = _DEFAULT_FETCH_USER_AGENT
+    """HTTP User-Agent header for article fetch requests.
+    Source: ``FETCH_USER_AGENT`` (optional, default: package version string)."""
+
+    max_items_per_run: int = 30
+    """Soft warning threshold for items fetched per run.
+
+    Source: ``MAX_ITEMS_PER_RUN`` (optional, default: 30).
+    Exceeding this triggers a WARN log; the run continues to process all
+    items. Lambda timeout (15 min) typically caps actual throughput at
+    ~30 items at 30s/item; excess items remain "未読" for next-day retry.
+    """
+
     @classmethod
     def from_env(cls) -> "Config":
-        channels = _parse_notification_channels(os.environ.get("NOTIFY_CHANNELS", "mail"))
-        granularity_mail = _parse_notify_granularity(
-            os.environ.get("NOTIFY_GRANULARITY_MAIL", "digest")
-        )
-        granularity_slack = _parse_notify_granularity(
-            os.environ.get("NOTIFY_GRANULARITY_SLACK", "digest")
-        )
-
-        # Each channel's transport-specific env vars are required only when that
-        # channel is enabled, so a slack-only deployment doesn't need MAIL_*
-        # and a mail-only deployment doesn't need SLACK_WEBHOOK_URL.
-        mail_from = ""
-        mail_to: list[str] = []
-        if NotificationChannel.MAIL in channels:
-            mail_from = os.environ.get("MAIL_FROM", "")
-            if not mail_from:
-                raise RuntimeError(
-                    "channel 'mail' is enabled but required env 'MAIL_FROM' is not set"
-                )
-            mail_to = _parse_mail_to(os.environ.get("MAIL_TO", ""))
-            if not mail_to:
-                raise RuntimeError("channel 'mail' is enabled but required env 'MAIL_TO' is empty")
-
-        slack_webhook_url = os.environ.get("SLACK_WEBHOOK_URL") or None
-        if NotificationChannel.SLACK in channels and not slack_webhook_url:
-            raise RuntimeError(
-                "channel 'slack' is enabled but required env 'SLACK_WEBHOOK_URL' is not set"
-            )
-
         return cls(
             notion_db_id=os.environ["NOTION_DB_ID"],
             notion_token=_resolve_secret("NOTION_TOKEN"),
             anthropic_api_key=_resolve_secret("ANTHROPIC_API_KEY"),
-            notification_channels=channels,
-            notify_granularity_mail=granularity_mail,
-            notify_granularity_slack=granularity_slack,
-            mail_from=mail_from,
-            mail_to=mail_to,
             notion_status_property=os.environ.get("NOTION_STATUS_PROPERTY", "Status"),
             notion_status_unread=os.environ.get("NOTION_STATUS_UNREAD", "未読"),
             notion_status_processed=os.environ.get("NOTION_STATUS_PROCESSED", "処理済み"),
@@ -215,9 +112,9 @@ class Config:
             llm_body_max_chars=int(os.environ.get("LLM_BODY_MAX_CHARS", "30000")),
             llm_max_rate_limit_retries=int(os.environ.get("LLM_MAX_RATE_LIMIT_RETRIES", "3")),
             llm_initial_backoff_sec=float(os.environ.get("LLM_INITIAL_BACKOFF_SEC", "1.0")),
-            llm_concurrency=int(os.environ.get("LLM_CONCURRENCY", "5")),
             fetch_timeout_sec=float(os.environ.get("FETCH_TIMEOUT_SEC", "15.0")),
-            aws_region=os.environ.get("AWS_REGION", "ap-northeast-1"),
-            slack_webhook_url=slack_webhook_url,
+            slack_webhook_url=os.environ.get("SLACK_WEBHOOK_URL") or None,
             slack_timeout_sec=float(os.environ.get("SLACK_TIMEOUT_SEC", "10.0")),
+            fetch_user_agent=os.environ.get("FETCH_USER_AGENT", _DEFAULT_FETCH_USER_AGENT),
+            max_items_per_run=int(os.environ.get("MAX_ITEMS_PER_RUN", "30")),
         )

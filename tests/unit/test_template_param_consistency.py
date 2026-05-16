@@ -68,27 +68,16 @@ def _parse_parameter_defaults(text: str) -> dict[str, str]:
 EXPECTED: list[tuple[str, str | None, Any]] = [
     ("NotionStatusUnread", "notion_status_unread", str),
     ("NotionStatusProcessed", "notion_status_processed", str),
-    ("NotifyChannels", None, str),  # not a single Config attr; checked separately
-    (
-        "NotifyGranularityMail",
-        None,
-        str,
-    ),  # parsed via _parse_notify_granularity; checked separately
-    (
-        "NotifyGranularitySlack",
-        None,
-        str,
-    ),  # parsed via _parse_notify_granularity; checked separately
     ("NotionStatusProperty", "notion_status_property", str),
     ("NotionTypeProperty", "notion_type_property", str),
     ("NotionPriorityProperty", "notion_priority_property", str),
     ("LlmModel", "llm_model", str),
-    ("LlmConcurrency", "llm_concurrency", int),
     ("LlmBodyMaxChars", "llm_body_max_chars", int),
     ("LlmMaxRateLimitRetries", "llm_max_rate_limit_retries", int),
     ("LlmInitialBackoffSec", "llm_initial_backoff_sec", float),
     ("FetchTimeoutSec", "fetch_timeout_sec", float),
     ("SlackTimeoutSec", "slack_timeout_sec", float),
+    ("MaxItemsPerRun", "max_items_per_run", int),
 ]
 
 
@@ -106,7 +95,6 @@ def config_defaults() -> Config:
         notion_db_id="",
         notion_token="",
         anthropic_api_key="",
-        notification_channels=frozenset(),
     )
 
 
@@ -135,25 +123,6 @@ class TestTemplateParameterDefaults:
             f"template.yaml.Parameters.{param_name}.Default={raw_template!r} "
             f"!= Config.{config_attr}={config_value!r}"
         )
-
-    def test_notify_channels_default_is_mail(self, template_defaults: dict[str, str]) -> None:
-        # NotifyChannels has no direct Config attribute; the default lives in
-        # Config.from_env via os.environ.get("NOTIFY_CHANNELS", "mail").
-        # We only assert template.yaml stays "mail" so Lambda matches local.
-        assert template_defaults["NotifyChannels"] == "mail"
-
-    def test_per_channel_notify_granularity_defaults_are_digest(
-        self, template_defaults: dict[str, str]
-    ) -> None:
-        # Both per-channel granularity Parameters must default to "digest" so
-        # the legacy single-message behavior keeps applying without action.
-        # Drift here would silently change every existing deployment's
-        # notification volume on the next sam deploy.
-        from read_later_digest.config import NotifyGranularity
-
-        assert template_defaults["NotifyGranularityMail"] == "digest"
-        assert template_defaults["NotifyGranularitySlack"] == "digest"
-        assert NotifyGranularity.DIGEST.value == "digest"
 
 
 class TestSamconfigTmplDriftGuard:

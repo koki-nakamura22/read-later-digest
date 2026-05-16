@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 @dataclass(frozen=True)
@@ -22,20 +25,6 @@ class FetchFailureReason(StrEnum):
     EXTRACTION_EMPTY = "extraction_empty"
 
 
-@dataclass(frozen=True)
-class FetchResult:
-    """Result of fetching and extracting article body from a URL.
-
-    `text` is set only when `ok` is True; `reason` is set only when `ok` is False.
-    """
-
-    url: str
-    ok: bool
-    text: str | None
-    reason: FetchFailureReason | None
-    status_code: int | None
-
-
 class ArticleType(StrEnum):
     ARTICLE = "記事"
     TECH = "技術"
@@ -49,12 +38,37 @@ class Priority(StrEnum):
     LOW = "低"
 
 
-@dataclass(frozen=True)
-class ArticleSummary:
+class ArticleSummary(BaseModel):
+    model_config = ConfigDict(frozen=True, populate_by_name=True)
+
     summary_lines: list[str]
     key_points: list[str]
-    type_: ArticleType | None
-    priority: Priority | None
+    type_: ArticleType | None = Field(default=None, alias="type")
+    priority: Priority | None = None
+
+    @field_validator("type_", mode="before")
+    @classmethod
+    def _coerce_type(cls, value: Any) -> ArticleType | None:
+        if value is None or isinstance(value, ArticleType):
+            return value
+        if isinstance(value, str):
+            try:
+                return ArticleType(value)
+            except ValueError:
+                return None
+        return None
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _coerce_priority(cls, value: Any) -> Priority | None:
+        if value is None or isinstance(value, Priority):
+            return value
+        if isinstance(value, str):
+            try:
+                return Priority(value)
+            except ValueError:
+                return None
+        return None
 
 
 class ProcessStatus(StrEnum):
@@ -102,7 +116,14 @@ class RenderedDigest:
 
 
 @dataclass(frozen=True)
-class RunResult:
+class ReadLaterRunResult:
+    """handler の return dict を組み立てるための集計値.
+
+    digestkit RunResult が持たない `notification_sent` / `status_updated` /
+    `duration_ms` を ReadLaterDigester 内で集計してこの dataclass に詰める.
+    handler は `asdict(result)` で dict に変換して return する.
+    """
+
     total_articles: int
     succeeded: int
     failed: int

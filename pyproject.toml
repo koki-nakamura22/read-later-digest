@@ -14,6 +14,7 @@ dependencies = [
     "anthropic>=0.40",
     "pydantic>=2.9",
     "boto3>=1.35",
+    "digestkit",
 ]
 
 [project.optional-dependencies]
@@ -23,7 +24,11 @@ dev = [
     "ruff>=0.7",
     "mypy>=1.13",
     "respx>=0.21",
+    "pyright>=1.1",
 ]
+
+[tool.uv.sources]
+digestkit = { path = "src/vendor/digestkit-0.1.0-py3-none-any.whl" }
 
 [build-system]
 requires = ["hatchling"]
@@ -51,6 +56,11 @@ files = ["src"]
 [[tool.mypy.overrides]]
 module = ["botocore.*"]
 ignore_missing_imports = true
+
+[tool.pyright]
+pythonVersion = "3.13"
+include = ["src"]
+typeCheckingMode = "basic"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

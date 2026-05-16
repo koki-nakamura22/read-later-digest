@@ -2,13 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from read_later_digest.config import (
-    Config,
-    NotificationChannel,
-    NotifyGranularity,
-    _parse_notification_channels,
-    _parse_notify_granularity,
-)
+from read_later_digest.config import Config
 
 REQUIRED_BASE_ENV = {
     "NOTION_DB_ID": "db-id",
@@ -22,177 +16,72 @@ def _set_base_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(k, v)
 
 
-class TestParseNotificationChannels:
-    def test_default_single_mail(self) -> None:
-        assert _parse_notification_channels("mail") == frozenset({NotificationChannel.MAIL})
-
-    def test_single_slack(self) -> None:
-        assert _parse_notification_channels("slack") == frozenset({NotificationChannel.SLACK})
-
-    def test_combined_mail_slack(self) -> None:
-        assert _parse_notification_channels("mail,slack") == frozenset(
-            {NotificationChannel.MAIL, NotificationChannel.SLACK}
-        )
-
-    def test_whitespace_and_case_are_normalized(self) -> None:
-        assert _parse_notification_channels(" Mail , SLACK ") == frozenset(
-            {NotificationChannel.MAIL, NotificationChannel.SLACK}
-        )
-
-    def test_duplicate_tokens_dedup(self) -> None:
-        assert _parse_notification_channels("mail,mail,slack") == frozenset(
-            {NotificationChannel.MAIL, NotificationChannel.SLACK}
-        )
-
-    def test_empty_string_raises(self) -> None:
-        with pytest.raises(RuntimeError, match="NOTIFY_CHANNELS' is empty"):
-            _parse_notification_channels("")
-
-    def test_only_whitespace_raises(self) -> None:
-        with pytest.raises(RuntimeError, match="NOTIFY_CHANNELS' is empty"):
-            _parse_notification_channels(" , , ")
-
-    def test_unknown_channel_raises_with_listing(self) -> None:
-        with pytest.raises(RuntimeError, match=r"unknown notification channels.*\['line'\]"):
-            _parse_notification_channels("mail,line")
-
-
-class TestConfigFromEnvMailOnly:
-    def test_default_channels_is_mail_and_requires_mail_envs(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+class TestConfigFromEnv:
+    def test_required_vars_produce_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _set_base_env(monkeypatch)
-        monkeypatch.delenv("NOTIFY_CHANNELS", raising=False)
-        monkeypatch.setenv("MAIL_FROM", "from@example.com")
-        monkeypatch.setenv("MAIL_TO", "to@example.com")
 
         cfg = Config.from_env()
-        assert cfg.notification_channels == frozenset({NotificationChannel.MAIL})
-        assert cfg.mail_from == "from@example.com"
-        assert cfg.mail_to == ["to@example.com"]
+
+        assert cfg.notion_db_id == "db-id"
+        assert cfg.notion_token == "tok"
+        assert cfg.anthropic_api_key == "anth"
+
+    def test_missing_notion_db_id_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_base_env(monkeypatch)
+        monkeypatch.delenv("NOTION_DB_ID")
+
+        with pytest.raises(KeyError):
+            Config.from_env()
+
+    def test_missing_notion_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_base_env(monkeypatch)
+        monkeypatch.delenv("NOTION_TOKEN")
+
+        with pytest.raises(RuntimeError, match="NOTION_TOKEN"):
+            Config.from_env()
+
+    def test_missing_anthropic_api_key_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_base_env(monkeypatch)
+        monkeypatch.delenv("ANTHROPIC_API_KEY")
+
+        with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+            Config.from_env()
+
+    def test_slack_webhook_url_is_optional(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_base_env(monkeypatch)
+        monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+
+        cfg = Config.from_env()
+
         assert cfg.slack_webhook_url is None
 
-    def test_mail_channel_without_mail_from_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_slack_webhook_url_is_read_when_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _set_base_env(monkeypatch)
-        monkeypatch.setenv("NOTIFY_CHANNELS", "mail")
-        monkeypatch.delenv("MAIL_FROM", raising=False)
-        monkeypatch.setenv("MAIL_TO", "to@example.com")
-
-        with pytest.raises(RuntimeError, match="'MAIL_FROM' is not set"):
-            Config.from_env()
-
-    def test_mail_channel_with_empty_mail_to_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_base_env(monkeypatch)
-        monkeypatch.setenv("NOTIFY_CHANNELS", "mail")
-        monkeypatch.setenv("MAIL_FROM", "from@example.com")
-        monkeypatch.setenv("MAIL_TO", "")
-
-        with pytest.raises(RuntimeError, match="'MAIL_TO' is empty"):
-            Config.from_env()
-
-
-class TestConfigFromEnvSlackOnly:
-    def test_slack_only_does_not_require_mail_envs(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_base_env(monkeypatch)
-        monkeypatch.setenv("NOTIFY_CHANNELS", "slack")
-        monkeypatch.delenv("MAIL_FROM", raising=False)
-        monkeypatch.delenv("MAIL_TO", raising=False)
         monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/x")
 
         cfg = Config.from_env()
-        assert cfg.notification_channels == frozenset({NotificationChannel.SLACK})
-        assert cfg.mail_from == ""
-        assert cfg.mail_to == []
+
         assert cfg.slack_webhook_url == "https://hooks.slack.com/services/x"
 
-    def test_slack_channel_without_webhook_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_max_items_per_run_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _set_base_env(monkeypatch)
-        monkeypatch.setenv("NOTIFY_CHANNELS", "slack")
-        monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
-
-        with pytest.raises(RuntimeError, match="'SLACK_WEBHOOK_URL' is not set"):
-            Config.from_env()
-
-
-class TestParseNotifyGranularity:
-    def test_default_value_is_digest_when_explicit(self) -> None:
-        assert _parse_notify_granularity("digest") is NotifyGranularity.DIGEST
-
-    def test_per_article_value(self) -> None:
-        assert _parse_notify_granularity("per_article") is NotifyGranularity.PER_ARTICLE
-
-    def test_whitespace_and_case_normalized(self) -> None:
-        assert _parse_notify_granularity("  PER_ARTICLE  ") is NotifyGranularity.PER_ARTICLE
-
-    def test_empty_raises(self) -> None:
-        with pytest.raises(RuntimeError, match="notify granularity value is empty"):
-            _parse_notify_granularity("   ")
-
-    def test_unknown_raises_with_listing(self) -> None:
-        with pytest.raises(RuntimeError, match="unknown notify granularity value 'bulk'"):
-            _parse_notify_granularity("bulk")
-
-
-class TestConfigPerChannelNotifyGranularity:
-    def test_both_default_to_digest_when_envs_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_base_env(monkeypatch)
-        monkeypatch.setenv("MAIL_FROM", "from@example.com")
-        monkeypatch.setenv("MAIL_TO", "to@example.com")
-        monkeypatch.delenv("NOTIFY_GRANULARITY_MAIL", raising=False)
-        monkeypatch.delenv("NOTIFY_GRANULARITY_SLACK", raising=False)
+        monkeypatch.delenv("MAX_ITEMS_PER_RUN", raising=False)
 
         cfg = Config.from_env()
-        assert cfg.notify_granularity_mail is NotifyGranularity.DIGEST
-        assert cfg.notify_granularity_slack is NotifyGranularity.DIGEST
 
-    def test_channels_can_be_set_independently(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The whole point of the per-channel split: a deployment can keep mail
-        # at digest (one combined daily mail) while letting slack run per-article
-        # so each article gets its own thread for emoji reactions.
+        assert cfg.max_items_per_run == 30
+
+    def test_max_items_per_run_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _set_base_env(monkeypatch)
-        monkeypatch.setenv("MAIL_FROM", "from@example.com")
-        monkeypatch.setenv("MAIL_TO", "to@example.com")
-        monkeypatch.setenv("NOTIFY_GRANULARITY_MAIL", "digest")
-        monkeypatch.setenv("NOTIFY_GRANULARITY_SLACK", "per_article")
+        monkeypatch.setenv("MAX_ITEMS_PER_RUN", "10")
 
         cfg = Config.from_env()
-        assert cfg.notify_granularity_mail is NotifyGranularity.DIGEST
-        assert cfg.notify_granularity_slack is NotifyGranularity.PER_ARTICLE
 
-    def test_unknown_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        assert cfg.max_items_per_run == 10
+
+    def test_max_items_per_run_invalid_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _set_base_env(monkeypatch)
-        monkeypatch.setenv("MAIL_FROM", "from@example.com")
-        monkeypatch.setenv("MAIL_TO", "to@example.com")
-        monkeypatch.setenv("NOTIFY_GRANULARITY_MAIL", "bulk")
+        monkeypatch.setenv("MAX_ITEMS_PER_RUN", "not-a-number")
 
-        with pytest.raises(RuntimeError, match="unknown notify granularity value 'bulk'"):
-            Config.from_env()
-
-
-class TestConfigFromEnvCombined:
-    def test_mail_and_slack_requires_both_sets_of_envs(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _set_base_env(monkeypatch)
-        monkeypatch.setenv("NOTIFY_CHANNELS", "mail,slack")
-        monkeypatch.setenv("MAIL_FROM", "from@example.com")
-        monkeypatch.setenv("MAIL_TO", "to@example.com")
-        monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/y")
-
-        cfg = Config.from_env()
-        assert cfg.notification_channels == frozenset(
-            {NotificationChannel.MAIL, NotificationChannel.SLACK}
-        )
-        assert cfg.mail_from == "from@example.com"
-        assert cfg.mail_to == ["to@example.com"]
-        assert cfg.slack_webhook_url == "https://hooks.slack.com/services/y"
-
-    def test_combined_missing_slack_webhook_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_base_env(monkeypatch)
-        monkeypatch.setenv("NOTIFY_CHANNELS", "mail,slack")
-        monkeypatch.setenv("MAIL_FROM", "from@example.com")
-        monkeypatch.setenv("MAIL_TO", "to@example.com")
-        monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
-
-        with pytest.raises(RuntimeError, match="'SLACK_WEBHOOK_URL' is not set"):
+        with pytest.raises(ValueError):
             Config.from_env()

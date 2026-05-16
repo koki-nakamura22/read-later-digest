@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: read-later-digest — daily Notion → Claude → SES batch (F7)
+Description: read-later-digest — daily Notion → Claude → Slack batch (digestkit-based)
 
 Parameters:
   NotionDbId:
@@ -25,12 +25,6 @@ Parameters:
   NotionStatusProcessed:
     Type: String
     Default: '処理済み'
-  MailFrom:
-    Type: String
-    Description: SES-verified sender address.
-  MailTo:
-    Type: String
-    Description: Comma-separated recipient list.
   ScheduleExpression:
     Type: String
     # 22:00 UTC daily = 07:00 JST daily
@@ -49,20 +43,6 @@ Parameters:
   LogRetentionDays:
     Type: Number
     Default: 30
-  NotifyChannels:
-    Type: String
-    Default: 'mail'
-    Description: Comma-separated notification channels (mail / slack).
-  NotifyGranularityMail:
-    Type: String
-    Default: 'digest'
-    AllowedValues: ['digest', 'per_article']
-    Description: Mail-channel fan-out granularity (digest = one combined message; per_article = one message per successfully summarized article + one aggregated failure summary).
-  NotifyGranularitySlack:
-    Type: String
-    Default: 'digest'
-    AllowedValues: ['digest', 'per_article']
-    Description: Slack-channel fan-out granularity. Same semantics as NotifyGranularityMail but applied independently so the two channels can differ.
   NotionStatusProperty:
     Type: String
     Default: 'Status'
@@ -75,9 +55,6 @@ Parameters:
   LlmModel:
     Type: String
     Default: 'claude-sonnet-4-6'
-  LlmConcurrency:
-    Type: Number
-    Default: 5
   LlmBodyMaxChars:
     Type: Number
     Default: 30000
@@ -96,6 +73,14 @@ Parameters:
     Type: String
     Default: '10.0'
     Description: Slack webhook timeout in seconds (float as string).
+  MaxItemsPerRun:
+    Type: Number
+    Default: 30
+    Description: Soft warning threshold for items fetched per run. Exceeding triggers a WARN log; the run still processes all items but may hit the Lambda timeout. See README "Operational constraints".
+  FetchUserAgent:
+    Type: String
+    Default: ''
+    Description: Override for HTTP fetch User-Agent. Empty = use package default (read-later-digest/<version> (+repo URL)).
 
 Globals:
   Function:
@@ -120,21 +105,17 @@ Resources:
           SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
           NOTION_STATUS_UNREAD: !Ref NotionStatusUnread
           NOTION_STATUS_PROCESSED: !Ref NotionStatusProcessed
-          MAIL_FROM: !Ref MailFrom
-          MAIL_TO: !Ref MailTo
-          NOTIFY_CHANNELS: !Ref NotifyChannels
-          NOTIFY_GRANULARITY_MAIL: !Ref NotifyGranularityMail
-          NOTIFY_GRANULARITY_SLACK: !Ref NotifyGranularitySlack
           NOTION_STATUS_PROPERTY: !Ref NotionStatusProperty
           NOTION_TYPE_PROPERTY: !Ref NotionTypeProperty
           NOTION_PRIORITY_PROPERTY: !Ref NotionPriorityProperty
           LLM_MODEL: !Ref LlmModel
-          LLM_CONCURRENCY: !Ref LlmConcurrency
           LLM_BODY_MAX_CHARS: !Ref LlmBodyMaxChars
           LLM_MAX_RATE_LIMIT_RETRIES: !Ref LlmMaxRateLimitRetries
           LLM_INITIAL_BACKOFF_SEC: !Ref LlmInitialBackoffSec
           FETCH_TIMEOUT_SEC: !Ref FetchTimeoutSec
           SLACK_TIMEOUT_SEC: !Ref SlackTimeoutSec
+          MAX_ITEMS_PER_RUN: !Ref MaxItemsPerRun
+          FETCH_USER_AGENT: !Ref FetchUserAgent
           POWERTOOLS_SERVICE_NAME: read-later-digest
           POWERTOOLS_LOG_LEVEL: INFO
       Events:
@@ -145,15 +126,6 @@ Resources:
             Name: read-later-digest-daily
             Description: Daily trigger for read-later-digest batch.
             Enabled: true
-      Policies:
-        - Statement:
-            - Sid: SesSend
-              Effect: Allow
-              Action:
-                - ses:SendEmail
-                - ses:SendRawEmail
-              Resource: '*'
-
   ReadLaterDigestLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:

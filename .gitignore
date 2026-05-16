@@ -2,6 +2,14 @@
 docs/
 .steering/
 
+# Claude Code フロー情報 (DR-0006)
+tasks.json
+.auto-implement/
+.auto-implement-on-docker/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.serena/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -42,3 +50,4 @@ Thumbs.db
 
 # Git worktree
 worktree/
+.rollback/

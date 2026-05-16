@@ -50,25 +50,21 @@ parameter_overrides = [
     "NotionDbId=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "NotionToken=secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "AnthropicApiKey=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    # Slack 通知を使わないなら空のままでよい (NotifyChannels に "slack" を含めない限り未使用)。
-    "SlackWebhookUrl=",
+    "SlackWebhookUrl=https://hooks.slack.com/services/T/B/X",
     "NotionStatusUnread=未読",
     "NotionStatusProcessed=処理済み",
-    "MailFrom=digest@example.com",
-    "MailTo=me@example.com",
-    "NotifyChannels=mail",
-    "NotifyGranularityMail=digest",
-    "NotifyGranularitySlack=digest",
     "NotionStatusProperty=Status",
     "NotionTypeProperty=Type",
     "NotionPriorityProperty=Priority",
     "LlmModel=claude-sonnet-4-6",
-    "LlmConcurrency=5",
     "LlmBodyMaxChars=30000",
     "LlmMaxRateLimitRetries=3",
     "LlmInitialBackoffSec=1.0",
     "FetchTimeoutSec=15.0",
     "SlackTimeoutSec=10.0",
+    "MaxItemsPerRun=30",
+    # Empty to use the package default (read-later-digest/<version> (+repo URL)).
+    "FetchUserAgent=",
 ]
 
 # ------------------------------------------------------------
