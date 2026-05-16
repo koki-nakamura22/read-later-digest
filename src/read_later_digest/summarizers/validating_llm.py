@@ -44,7 +44,7 @@ class ValidatingLLMSummarizer:
             digest = self._inner.summarize(text, item)
             try:
                 ArticleSummary.model_validate_json(_extract_json(digest.summary))
-            except (ValidationError, LLMError, ValueError) as e:
+            except (ValidationError, LLMError) as e:
                 last_err = e
                 logger.warning(
                     "schema validation failed",

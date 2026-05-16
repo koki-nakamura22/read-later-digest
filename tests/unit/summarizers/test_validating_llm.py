@@ -147,6 +147,15 @@ class TestParseSummary:
         assert result.type_ is None
         assert result.priority is None
 
+    def test_extracts_summary_from_json_embedded_in_prose(self) -> None:
+        # Arrange — LLM may prepend/append prose despite system prompt instruction
+        json_part = '{"summary_lines": ["a", "b", "c"], "key_points": ["x"]}'
+        digest = _digest(f"以下がJSONです\n{json_part}\n以上です")
+        # Act
+        result = parse_summary(digest)
+        # Assert
+        assert result.summary_lines == ["a", "b", "c"]
+
     def test_no_json_in_summary_raises_llm_error(self) -> None:
         # Arrange
         digest = _digest("no json object here")
@@ -264,11 +273,13 @@ class TestValidatingLLMSummarizerSummarize:
     def test_length_kwarg_is_accepted(self) -> None:
         # Arrange — length is an optional kwarg; must not raise TypeError
         inner = _inner_mock()
-        inner.summarize.return_value = _digest(_valid_json())
+        valid_digest = _digest(_valid_json())
+        inner.summarize.return_value = valid_digest
         summarizer = ValidatingLLMSummarizer(inner, max_schema_retries=1)
-        # Act / Assert — no TypeError
+        # Act
         result = summarizer.summarize("article text", _item(), length="long")
-        assert result is not None
+        # Assert
+        assert result is valid_digest
 
 
 class TestValidatingLLMSummarizerLogging:
