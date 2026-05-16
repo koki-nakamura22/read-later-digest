@@ -137,3 +137,20 @@ class RunResult:
     notification_sent: bool
     status_updated: int
     duration_ms: int
+
+
+@dataclass(frozen=True)
+class ReadLaterRunResult:
+    """handler の return dict を組み立てるための集計値.
+
+    digestkit RunResult が持たない `notification_sent` / `status_updated` /
+    `duration_ms` を ReadLaterDigester 内で集計してこの dataclass に詰める.
+    handler は `asdict(result)` で dict に変換して return する.
+    """
+
+    total_articles: int
+    succeeded: int
+    failed: int
+    notification_sent: bool
+    status_updated: int
+    duration_ms: int
