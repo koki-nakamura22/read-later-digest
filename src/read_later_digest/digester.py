@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta, timezone
+from functools import partial
 from typing import Any
 
 from digestkit.digester import Digester
@@ -117,9 +118,10 @@ class ReadLaterDigester(Digester):
                 else:
                     reason_str = str(f.error)
                 with_retry(
-                    lambda fid=f.item.id, rs=reason_str: self._notion_client.blocks.children.append(
-                        block_id=fid,
-                        children=[_paragraph_block(f"[処理失敗] {rs}")],
+                    partial(
+                        self._notion_client.blocks.children.append,
+                        block_id=f.item.id,
+                        children=[_paragraph_block(f"[処理失敗] {reason_str}")],
                     ),
                     max_retries=3,
                     initial_backoff_sec=1.0,
