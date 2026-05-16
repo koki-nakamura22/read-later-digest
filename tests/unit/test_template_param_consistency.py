@@ -72,12 +72,12 @@ EXPECTED: list[tuple[str, str | None, Any]] = [
     ("NotionTypeProperty", "notion_type_property", str),
     ("NotionPriorityProperty", "notion_priority_property", str),
     ("LlmModel", "llm_model", str),
-    ("LlmConcurrency", "llm_concurrency", int),
     ("LlmBodyMaxChars", "llm_body_max_chars", int),
     ("LlmMaxRateLimitRetries", "llm_max_rate_limit_retries", int),
     ("LlmInitialBackoffSec", "llm_initial_backoff_sec", float),
     ("FetchTimeoutSec", "fetch_timeout_sec", float),
     ("SlackTimeoutSec", "slack_timeout_sec", float),
+    ("MaxItemsPerRun", "max_items_per_run", int),
 ]
 
 

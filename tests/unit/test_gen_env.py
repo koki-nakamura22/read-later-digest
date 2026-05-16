@@ -127,21 +127,17 @@ EXPECTED_MAPPINGS = {
     "SlackWebhookUrl": "SLACK_WEBHOOK_URL",
     "NotionStatusUnread": "NOTION_STATUS_UNREAD",
     "NotionStatusProcessed": "NOTION_STATUS_PROCESSED",
-    "MailFrom": "MAIL_FROM",
-    "MailTo": "MAIL_TO",
-    "NotifyChannels": "NOTIFY_CHANNELS",
-    "NotifyGranularityMail": "NOTIFY_GRANULARITY_MAIL",
-    "NotifyGranularitySlack": "NOTIFY_GRANULARITY_SLACK",
     "NotionStatusProperty": "NOTION_STATUS_PROPERTY",
     "NotionTypeProperty": "NOTION_TYPE_PROPERTY",
     "NotionPriorityProperty": "NOTION_PRIORITY_PROPERTY",
     "LlmModel": "LLM_MODEL",
-    "LlmConcurrency": "LLM_CONCURRENCY",
     "LlmBodyMaxChars": "LLM_BODY_MAX_CHARS",
     "LlmMaxRateLimitRetries": "LLM_MAX_RATE_LIMIT_RETRIES",
     "LlmInitialBackoffSec": "LLM_INITIAL_BACKOFF_SEC",
     "FetchTimeoutSec": "FETCH_TIMEOUT_SEC",
     "SlackTimeoutSec": "SLACK_TIMEOUT_SEC",
+    "MaxItemsPerRun": "MAX_ITEMS_PER_RUN",
+    "FetchUserAgent": "FETCH_USER_AGENT",
 }
 
 
@@ -200,23 +196,19 @@ parameter_overrides = [
     "NotionToken=secret_abc",
     "AnthropicApiKey=sk-ant-zzz",
     "SlackWebhookUrl=",
-    "MailFrom=from@example.com",
-    "MailTo=to@example.com",
-    "NotifyChannels=mail",
-    "NotifyGranularityMail=digest",
-    "NotifyGranularitySlack=digest",
     "NotionStatusUnread=未読",
     "NotionStatusProcessed=処理済み",
     "NotionStatusProperty=Status",
     "NotionTypeProperty=Type",
     "NotionPriorityProperty=Priority",
     "LlmModel=claude-sonnet-4-6",
-    "LlmConcurrency=5",
     "LlmBodyMaxChars=30000",
     "LlmMaxRateLimitRetries=3",
     "LlmInitialBackoffSec=1.0",
     "FetchTimeoutSec=15.0",
     "SlackTimeoutSec=10.0",
+    "MaxItemsPerRun=30",
+    "FetchUserAgent=",
     "LambdaTimeoutSeconds=600",
 ]
 
@@ -292,5 +284,5 @@ class TestMainIntegration:
     def test_mapped_non_secret_value_round_trips(self, gen_env: ModuleType, tmp_path: Path) -> None:
         env = self._run(gen_env, tmp_path)
         assert env["NOTION_DB_ID"] == "db123"
-        assert env["MAIL_FROM"] == "from@example.com"
-        assert env["NOTIFY_CHANNELS"] == "mail"
+        assert env["NOTION_STATUS_UNREAD"] == "未読"
+        assert env["MAX_ITEMS_PER_RUN"] == "30"

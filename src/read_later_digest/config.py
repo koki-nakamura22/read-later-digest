@@ -72,10 +72,6 @@ class Config:
     """Initial backoff (seconds) for exponential retry on LLM rate-limit errors.
     Source: ``LLM_INITIAL_BACKOFF_SEC`` (optional, default: ``1.0``)."""
 
-    llm_concurrency: int = 5
-    """Maximum number of concurrent LLM requests during digest building.
-    Source: ``LLM_CONCURRENCY`` (optional, default: ``5``)."""
-
     fetch_timeout_sec: float = 15.0
     """HTTP timeout (seconds) for fetching the URL body of each entry.
     Source: ``FETCH_TIMEOUT_SEC`` (optional, default: ``15.0``)."""
@@ -116,7 +112,6 @@ class Config:
             llm_body_max_chars=int(os.environ.get("LLM_BODY_MAX_CHARS", "30000")),
             llm_max_rate_limit_retries=int(os.environ.get("LLM_MAX_RATE_LIMIT_RETRIES", "3")),
             llm_initial_backoff_sec=float(os.environ.get("LLM_INITIAL_BACKOFF_SEC", "1.0")),
-            llm_concurrency=int(os.environ.get("LLM_CONCURRENCY", "5")),
             fetch_timeout_sec=float(os.environ.get("FETCH_TIMEOUT_SEC", "15.0")),
             slack_webhook_url=os.environ.get("SLACK_WEBHOOK_URL") or None,
             slack_timeout_sec=float(os.environ.get("SLACK_TIMEOUT_SEC", "10.0")),
