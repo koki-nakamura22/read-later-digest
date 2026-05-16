@@ -98,11 +98,14 @@ class TestWithRetryFailure:
         def func() -> str:
             raise _rate_limited()
 
+        sleeps: list[float] = []
+
         # Act & Assert
         with pytest.raises(APIResponseError) as exc_info:
-            with_retry(func, max_retries=2, initial_backoff_sec=1.0, sleep=lambda _: None)
+            with_retry(func, max_retries=2, initial_backoff_sec=1.0, sleep=sleeps.append)
 
         assert exc_info.value.status == 429
+        assert len(sleeps) == 2  # slept once per retry (max_retries=2)
 
     def test_does_not_retry_non_429(self) -> None:
         # Arrange
@@ -177,9 +180,8 @@ class TestRetryAfterHeader:
         # Act
         with_retry(func, max_retries=3, initial_backoff_sec=1.0, sleep=sleeps.append)
 
-        # Assert
-        assert len(sleeps) == 1
-        assert abs(sleeps[0] - 15.0) < 1.0  # within 1 second tolerance
+        # Assert: time.time is fully fixed so the delta is exact
+        assert sleeps == [15.0]
 
     def test_fallback_to_exponential_on_invalid_retry_after(self) -> None:
         # Arrange
@@ -198,6 +200,42 @@ class TestRetryAfterHeader:
 
         # Assert: falls back to initial_backoff_sec * 2^0 = 2.0
         assert sleeps == [2.0]
+
+    def test_retry_after_zero_sleeps_zero_seconds(self) -> None:
+        # Arrange: "0" is a valid non-negative Retry-After
+        calls: list[int] = []
+
+        def func() -> str:
+            calls.append(1)
+            if len(calls) == 1:
+                raise _rate_limited(retry_after="0")
+            return "ok"
+
+        sleeps: list[float] = []
+
+        # Act
+        with_retry(func, max_retries=3, initial_backoff_sec=1.0, sleep=sleeps.append)
+
+        # Assert
+        assert sleeps == [0.0]
+
+    def test_retry_after_negative_clamps_to_zero(self) -> None:
+        # Arrange: negative value is clamped to 0.0 by max(0.0, ...)
+        calls: list[int] = []
+
+        def func() -> str:
+            calls.append(1)
+            if len(calls) == 1:
+                raise _rate_limited(retry_after="-5")
+            return "ok"
+
+        sleeps: list[float] = []
+
+        # Act
+        with_retry(func, max_retries=3, initial_backoff_sec=1.0, sleep=sleeps.append)
+
+        # Assert
+        assert sleeps == [0.0]
 
     def test_retry_after_empty_string_falls_back_to_exponential(self) -> None:
         # Arrange
