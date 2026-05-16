@@ -280,6 +280,39 @@ class TestOneFailureItem:
             children=[_paragraph_block("[処理失敗] something went wrong")],
         )
 
+    def test_notification_sent_false_when_all_skipped(self) -> None:
+        # Arrange: super().run() returns success=0, failures=[] (e.g. all items deduped/skipped)
+        item = _make_item(id="page-1")
+        digester, _, _, _ = _make_digester(items=[item])
+
+        with patch.object(Digester, "run", return_value=RunResult(success=0, failures=[])):
+            result = digester.run()
+
+        # Assert: no notification when nothing succeeded and no failures
+        assert result.notification_sent is False
+        assert result.succeeded == 0
+        assert result.failed == 0
+
+    def test_success_and_failure_mixed(self) -> None:
+        # Arrange: 1 success + 1 failure in the same run
+        item_ok = _make_item(id="page-ok", added_at="2024-01-01T00:00:00+00:00")
+        item_fail = _make_item(id="page-fail", added_at="2024-02-01T00:00:00+00:00")
+        digester, _, slack, notion = _make_digester(items=[item_ok, item_fail])
+        failure = FailureInfo(
+            item=item_fail, stage="write", error=FetchFailure(FetchFailureReason.TIMEOUT)
+        )
+
+        with patch.object(Digester, "run", return_value=RunResult(success=1, failures=[failure])):
+            result = digester.run()
+
+        # Assert: both counts correct, notification sent
+        assert result.succeeded == 1
+        assert result.failed == 1
+        assert result.notification_sent is True
+        assert result.total_articles == 2
+        notion.blocks.children.append.assert_called_once()
+        slack.send_failure_summary.assert_called_once()
+
     def test_multiple_failures_each_get_notion_block(self) -> None:
         # Arrange
         item_a = _make_item(id="page-a", added_at="2024-01-01T00:00:00+00:00")
@@ -305,11 +338,11 @@ class TestOneFailureItem:
 
 class TestSorting:
     def _capture_enriched_items(self, digester: ReadLaterDigester) -> list[Item]:
-        """Patch Digester.run to capture the enriched items from _CachedSource."""
+        """Patch Digester.run to capture the enriched items via the public fetch() interface."""
         captured: list[Item] = []
 
         def _capture(self_inner: ReadLaterDigester, **kwargs: Any) -> RunResult:
-            captured.extend(self_inner.source._items)  # type: ignore[attr-defined]
+            captured.extend(self_inner.source.fetch())
             return RunResult(success=0)
 
         with patch.object(Digester, "run", _capture):
@@ -355,6 +388,19 @@ class TestSorting:
 
         # Assert
         assert captured[0].id == "page-no-date"
+
+    def test_item_with_malformed_date_sorts_to_front(self) -> None:
+        # Arrange: malformed ISO → ValueError → datetime.min → sorts first
+        bad_page = {"properties": {"AddedAt": {"created_time": "not-a-date"}}}
+        item_bad = Item(id="page-bad", payload="https://ex.com", metadata={"page": bad_page})
+        item_good = _make_item(id="page-good", added_at="2024-01-01T00:00:00+00:00")
+        digester, _, _, _ = _make_digester(items=[item_good, item_bad])
+
+        # Act
+        captured = self._capture_enriched_items(digester)
+
+        # Assert: malformed date → datetime.min → front
+        assert captured[0].id == "page-bad"
 
     def test_date_style_property_sorted_correctly(self) -> None:
         # Arrange: date property (not created_time) style
@@ -480,7 +526,7 @@ class TestMetadataEnrichment:
         captured: list[Item] = []
 
         def _capture(self_inner: ReadLaterDigester, **kwargs: Any) -> RunResult:
-            captured.extend(self_inner.source._items)  # type: ignore[attr-defined]
+            captured.extend(self_inner.source.fetch())
             return RunResult(success=len(captured))
 
         with patch.object(Digester, "run", _capture):
