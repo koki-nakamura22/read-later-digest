@@ -7,6 +7,7 @@ tasks.json
 .auto-implement/
 .auto-implement-on-docker/
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 .serena/
 
 # Python
