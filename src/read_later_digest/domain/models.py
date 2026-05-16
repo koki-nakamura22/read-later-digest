@@ -25,20 +25,6 @@ class FetchFailureReason(StrEnum):
     EXTRACTION_EMPTY = "extraction_empty"
 
 
-@dataclass(frozen=True)
-class FetchResult:
-    """Result of fetching and extracting article body from a URL.
-
-    `text` is set only when `ok` is True; `reason` is set only when `ok` is False.
-    """
-
-    url: str
-    ok: bool
-    text: str | None
-    reason: FetchFailureReason | None
-    status_code: int | None
-
-
 class ArticleType(StrEnum):
     ARTICLE = "記事"
     TECH = "技術"
@@ -127,16 +113,6 @@ class RenderedDigest:
     subject: str
     html: str
     text: str
-
-
-@dataclass(frozen=True)
-class RunResult:
-    total_articles: int
-    succeeded: int
-    failed: int
-    notification_sent: bool
-    status_updated: int
-    duration_ms: int
 
 
 @dataclass(frozen=True)

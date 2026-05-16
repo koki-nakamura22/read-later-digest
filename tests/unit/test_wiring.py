@@ -29,7 +29,6 @@ def _minimal_config(monkeypatch: pytest.MonkeyPatch) -> Config:
     monkeypatch.setenv("NOTION_DB_ID", "db-1")
     monkeypatch.setenv("NOTION_TOKEN", "tok")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
-    monkeypatch.setenv("NOTIFY_CHANNELS", "slack")
     monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.example/x")
     return Config.from_env()
 
