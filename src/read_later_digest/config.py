@@ -1,6 +1,12 @@
 import os
 from dataclasses import dataclass, field
 from enum import StrEnum
+from importlib.metadata import version as _pkg_version
+
+_DEFAULT_FETCH_USER_AGENT: str = (
+    f"read-later-digest/{_pkg_version('read-later-digest')}"
+    " (+https://github.com/koki-nakamura22/read-later-digest)"
+)
 
 
 class NotificationChannel(StrEnum):
@@ -166,6 +172,14 @@ class Config:
     """HTTP timeout (seconds) for Slack webhook POST requests.
     Source: ``SLACK_TIMEOUT_SEC`` (optional, default: ``10.0``)."""
 
+    fetch_user_agent: str = _DEFAULT_FETCH_USER_AGENT
+    """HTTP User-Agent header for article fetch requests.
+    Source: ``FETCH_USER_AGENT`` (optional, default: package version string)."""
+
+    max_items_per_run: int = 30
+    """Maximum number of articles processed per Lambda invocation.
+    Source: ``MAX_ITEMS_PER_RUN`` (optional, default: ``30``)."""
+
     @classmethod
     def from_env(cls) -> "Config":
         channels = _parse_notification_channels(os.environ.get("NOTIFY_CHANNELS", "mail"))
@@ -220,4 +234,6 @@ class Config:
             aws_region=os.environ.get("AWS_REGION", "ap-northeast-1"),
             slack_webhook_url=slack_webhook_url,
             slack_timeout_sec=float(os.environ.get("SLACK_TIMEOUT_SEC", "10.0")),
+            fetch_user_agent=os.environ.get("FETCH_USER_AGENT", _DEFAULT_FETCH_USER_AGENT),
+            max_items_per_run=int(os.environ.get("MAX_ITEMS_PER_RUN", "30")),
         )
