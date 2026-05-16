@@ -428,6 +428,49 @@ class TestFetchFailureException:
         assert exc.reason is FetchFailureReason.BLOCKED_HOST
 
 
+class TestExtractRedirect:
+    def test_follows_301_redirect_when_own_client_created(self) -> None:
+        # Arrange — no external client → extractor creates httpx.Client(follow_redirects=True)
+        # AC5: the internally created client must follow redirects automatically
+        with respx.mock:
+            respx.get(EXTERNAL_URL).mock(
+                return_value=httpx.Response(301, headers={"Location": "https://example.com/final"})
+            )
+            respx.get("https://example.com/final").mock(
+                return_value=httpx.Response(200, html=SAMPLE_HTML)
+            )
+            extractor = SafeWebPageExtractor(host_resolver=_public_ip_resolver)
+            # Act
+            result = extractor.extract(_item())
+            extractor.close()
+        # Assert
+        assert isinstance(result, str)
+        assert "first paragraph" in result
+
+
+class TestExtractTrafilaturaOptions:
+    def test_trafilatura_called_with_required_options(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Arrange
+        captured_kwargs: dict[str, object] = {}
+
+        def _spy(*args: object, **kwargs: object) -> str:
+            captured_kwargs.update(kwargs)
+            return "extracted text"
+
+        monkeypatch.setattr("read_later_digest.extractors.safe_webpage.trafilatura.extract", _spy)
+        with httpx.Client() as client, respx.mock:
+            respx.get(EXTERNAL_URL).mock(return_value=httpx.Response(200, html=SAMPLE_HTML))
+            extractor = _build_extractor(client)
+            # Act
+            extractor.extract(_item())
+        # Assert — AC7: options must be preserved
+        assert captured_kwargs.get("include_comments") is False
+        assert captured_kwargs.get("include_tables") is True
+        assert captured_kwargs.get("output_format") == "txt"
+
+
 class TestExtractorClientLifecycle:
     def test_close_with_owned_client_closes_internal_client(self) -> None:
         # Arrange — no external client → extractor owns the httpx.Client
