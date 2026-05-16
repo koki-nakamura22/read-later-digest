@@ -78,3 +78,10 @@ class TestConfigFromEnv:
         cfg = Config.from_env()
 
         assert cfg.max_items_per_run == 10
+
+    def test_max_items_per_run_invalid_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_base_env(monkeypatch)
+        monkeypatch.setenv("MAX_ITEMS_PER_RUN", "not-a-number")
+
+        with pytest.raises(ValueError):
+            Config.from_env()

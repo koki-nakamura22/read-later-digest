@@ -93,8 +93,13 @@ class Config:
     Source: ``FETCH_USER_AGENT`` (optional, default: package version string)."""
 
     max_items_per_run: int = 30
-    """Maximum number of articles processed per Lambda invocation.
-    Source: ``MAX_ITEMS_PER_RUN`` (optional, default: ``30``)."""
+    """Soft warning threshold for items fetched per run.
+
+    Source: ``MAX_ITEMS_PER_RUN`` (optional, default: 30).
+    Exceeding this triggers a WARN log; the run continues to process all
+    items. Lambda timeout (15 min) typically caps actual throughput at
+    ~30 items at 30s/item; excess items remain "未読" for next-day retry.
+    """
 
     @classmethod
     def from_env(cls) -> "Config":

@@ -1,3 +1,11 @@
+"""AWS Lambda entrypoint invoked by EventBridge Scheduler.
+
+Operational constraints:
+- Items per invocation: ≤ MAX_ITEMS_PER_RUN (default 30) due to serial
+  LLM execution. Excess items time out and remain "未読" for retry.
+- Parallel execution support is tracked at koki-nakamura22/inboxkit#40.
+"""
+
 from __future__ import annotations
 
 import logging

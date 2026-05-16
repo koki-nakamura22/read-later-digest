@@ -62,6 +62,21 @@ uv run python -m read_later_digest.run --dry-run
 
 > **将来検討**: リポジトリ共有 / CI 導入 / prod 環境分離が発生したタイミングで、機密の保管先を AWS Secrets Manager に移行することを検討する。それまでは個人利用前提で `samconfig.toml`(.gitignore 済み)+ `NoEcho` パラメータの組み合わせで運用する。
 
+## Operational constraints
+
+read-later-digest は 1 回の Lambda 実行で記事を**直列**に処理する (LLM 呼び出しを並列化していない)。
+
+| 項目 | 値 |
+|---|---|
+| 1 回の実行で処理可能な目安 | 30 件以下 |
+| `MAX_ITEMS_PER_RUN` (env, default) | 30 |
+| Lambda タイムアウト | 15 分 |
+| 1 件あたりの平均処理時間 | ~30 秒 (fetch + LLM 含む) |
+
+超過時の挙動: 未処理の記事は Notion 上「未読」のまま残り、翌日のバッチで再処理される (失敗時は `status_value_failure` 未指定で Status を変更しないため)。
+
+並列化を取り戻すには digestkit 側の [Digester.run() 並列実行サポート (inboxkit#40)](https://github.com/koki-nakamura22/inboxkit/issues/40) のマージが必要。本決定 (C3 直列) は項目 05 で詳細記載。
+
 ## デプロイ (AWS Lambda + EventBridge)
 
 `template.yaml` で Lambda 関数 / EventBridge 日次スケジュール / IAM ロール / CloudWatch Logs を宣言している。`samconfig.toml` の `parameter_overrides` を読むため、コマンドラインでの override は不要。
