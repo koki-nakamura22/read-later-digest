@@ -9,6 +9,6 @@ except PackageNotFoundError:
     # Fallback for environments without installed dist metadata
     # (e.g. AWS Lambda zip deploy where only source files are shipped).
     # Keep this in sync with pyproject.toml [project] version.
-    __version__ = "0.2.1"
+    __version__ = "0.3.0"
 
 __all__ = ["__version__"]
