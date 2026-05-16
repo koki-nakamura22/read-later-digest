@@ -51,7 +51,7 @@ class TestReadLaterRunResult:
         assert out["duration_ms"] == 1234
 
     def test_is_frozen(self) -> None:
-        result = ReadLaterRunResult(0, 0, 0, False, 0, 0)
+        result = _make_result()
         with pytest.raises(dataclasses.FrozenInstanceError):
             result.total_articles = 5  # type: ignore[misc]
 
@@ -65,16 +65,14 @@ class TestReadLaterRunResult:
             duration_ms=0,
         )
         out = dataclasses.asdict(result)
-        assert out["total_articles"] == 0
-        assert out["notification_sent"] is False
-
-    def test_notification_sent_false(self) -> None:
-        result = _make_result(notification_sent=False)
-        assert dataclasses.asdict(result)["notification_sent"] is False
-
-    def test_notification_sent_true(self) -> None:
-        result = _make_result(notification_sent=True)
-        assert dataclasses.asdict(result)["notification_sent"] is True
+        assert out == {
+            "total_articles": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "notification_sent": False,
+            "status_updated": 0,
+            "duration_ms": 0,
+        }
 
     def test_large_values(self) -> None:
         result = ReadLaterRunResult(
@@ -86,5 +84,11 @@ class TestReadLaterRunResult:
             duration_ms=999_999,
         )
         out = dataclasses.asdict(result)
-        assert out["total_articles"] == 10_000
-        assert out["duration_ms"] == 999_999
+        assert out == {
+            "total_articles": 10_000,
+            "succeeded": 9_999,
+            "failed": 1,
+            "notification_sent": True,
+            "status_updated": 9_999,
+            "duration_ms": 999_999,
+        }
