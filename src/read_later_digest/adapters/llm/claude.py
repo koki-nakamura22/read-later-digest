@@ -91,7 +91,7 @@ class ClaudeLLMClient:
             return ArticleSummary(
                 summary_lines=payload.summary_lines,
                 key_points=payload.key_points,
-                type_=payload.type,
+                type=payload.type,
                 priority=payload.priority,
             )
 

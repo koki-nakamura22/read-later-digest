@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 @dataclass(frozen=True)
@@ -49,12 +52,37 @@ class Priority(StrEnum):
     LOW = "低"
 
 
-@dataclass(frozen=True)
-class ArticleSummary:
+class ArticleSummary(BaseModel):
+    model_config = ConfigDict(frozen=True, populate_by_name=True)
+
     summary_lines: list[str]
     key_points: list[str]
-    type_: ArticleType | None
-    priority: Priority | None
+    type_: ArticleType | None = Field(default=None, alias="type")
+    priority: Priority | None = None
+
+    @field_validator("type_", mode="before")
+    @classmethod
+    def _coerce_type(cls, value: Any) -> ArticleType | None:
+        if value is None or isinstance(value, ArticleType):
+            return value
+        if isinstance(value, str):
+            try:
+                return ArticleType(value)
+            except ValueError:
+                return None
+        return None
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _coerce_priority(cls, value: Any) -> Priority | None:
+        if value is None or isinstance(value, Priority):
+            return value
+        if isinstance(value, str):
+            try:
+                return Priority(value)
+            except ValueError:
+                return None
+        return None
 
 
 class ProcessStatus(StrEnum):
