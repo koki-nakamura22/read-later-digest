@@ -154,11 +154,31 @@ class TestMakeSuccessProperties:
 
         assert props["Priority"]["select"]["name"] == expected_name
 
+    def test_item_payload_does_not_affect_output(self) -> None:
+        digest = _digest('{"summary_lines":["a"],"key_points":["x"],"type":null,"priority":null}')
+
+        props = _make_success_properties(Item(id="id-A", payload=None), digest)
+
+        assert props == {}
+
     def test_item_id_does_not_affect_output(self) -> None:
         digest = _digest('{"summary_lines":["a"],"key_points":["x"],"type":null,"priority":null}')
 
-        assert _make_success_properties(Item(id="id-A", payload=None), digest) == {}
-        assert _make_success_properties(Item(id="id-B", payload=None), digest) == {}
+        props = _make_success_properties(Item(id="id-B", payload="https://example.com"), digest)
+
+        assert props == {}
+
+    def test_unknown_type_string_is_treated_as_null(self) -> None:
+        # ArticleSummary._coerce_type coerces unknown values to None; the callback must
+        # omit the "Type" key in that case.
+        digest = _digest(
+            '{"summary_lines":["a"],"key_points":["x"],"type":"unknown-value","priority":null}'
+        )
+        item = _item()
+
+        props = _make_success_properties(item, digest)
+
+        assert "Type" not in props
 
 
 # ---------- _build_summary_blocks ----------
@@ -234,6 +254,19 @@ class TestBuildSummaryBlocks:
 
         # heading + 1 paragraph + heading + 1 bullet = 4
         assert len(blocks) == 4
+
+    def test_block_order_is_heading_paragraphs_heading_bullets(self) -> None:
+        digest = _digest('{"summary_lines":["s1","s2"],"key_points":["k1"]}')
+        item = _item()
+
+        blocks = _build_summary_blocks(digest, item)
+
+        # [0] heading_3(要約), [1] para(s1), [2] para(s2), [3] heading_3(重要ポイント), [4] bullet(k1)
+        assert blocks[0]["type"] == "heading_3"
+        assert blocks[1]["type"] == "paragraph"
+        assert blocks[2]["type"] == "paragraph"
+        assert blocks[3]["type"] == "heading_3"
+        assert blocks[4]["type"] == "bulleted_list_item"
 
 
 # ---------- build_digester ----------
