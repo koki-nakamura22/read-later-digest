@@ -80,6 +80,18 @@ class TestSlackBlockKitSinkInit:
         # Assert — externally injected client is NOT closed by sink
         client.close.assert_not_called()
 
+    def test_close_closes_internally_owned_client(self) -> None:
+        # Arrange — inject a mock to avoid real network; simulate "no client passed"
+        # by directly patching the internal state after construction
+        internal_client = MagicMock(spec=httpx.Client)
+        sink = SlackBlockKitSink(webhook_url=_WEBHOOK_URL)
+        sink._client = internal_client  # replace real client with mock for assertion
+        sink._owns_client = True
+        # Act
+        sink.close()
+        # Assert
+        internal_client.close.assert_called_once()
+
 
 # ---------- write — Block Kit ペイロード構造 ----------
 
@@ -208,6 +220,17 @@ class TestSlackBlockKitSinkHeaderWithoutIndexTotal:
         blocks = client.post.call_args.kwargs["json"]["blocks"]
         assert blocks[0]["text"]["text"] == "部分メタ"
 
+    def test_header_shows_title_only_when_total_present_but_index_absent(self) -> None:
+        # Arrange — total あり、index なしの場合もプレフィックスなし
+        sink, client = _make_sink_with_mock()
+        meta = {"title": "逆パターン", "url": "https://example.com", "total": 3}
+        item = Item(id="p4", payload="https://example.com", metadata=meta)
+        # Act
+        sink.write(_digest(), item)
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert blocks[0]["text"]["text"] == "逆パターン"
+
     def test_header_uses_payload_as_title_when_title_missing(self) -> None:
         # Arrange — title メタデータなし、payload を fallback
         item = Item(id="p3", payload="https://fallback.example.com", metadata={})
@@ -217,6 +240,17 @@ class TestSlackBlockKitSinkHeaderWithoutIndexTotal:
         # Assert
         blocks = client.post.call_args.kwargs["json"]["blocks"]
         assert "https://fallback.example.com" in blocks[0]["text"]["text"]
+
+    def test_metadata_none_falls_back_to_payload(self) -> None:
+        # Arrange — metadata 自体が None の場合、payload を title/url に使う
+        item = Item(id="p5", payload="https://payload.example.com", metadata=None)
+        sink, client = _make_sink_with_mock()
+        # Act
+        sink.write(_digest(), item)
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        assert "https://payload.example.com" in blocks[0]["text"]["text"]
+        assert "<https://payload.example.com|記事を開く>" in blocks[1]["text"]["text"]
 
 
 # ---------- write — Type / Priority None ----------
@@ -251,6 +285,40 @@ class TestSlackBlockKitSinkNullableMetadata:
         tag_text = blocks[2]["text"]["text"]
         assert "未分類" in tag_text
         assert "未設定" in tag_text
+
+    def test_summary_block_empty_lines(self) -> None:
+        # Arrange — summary_lines が空リストの場合は bullet 行なし (境界値: 0件)
+        empty_digest = Digest(
+            summary='{"summary_lines":[],"key_points":["x"],"type":null,"priority":null}',
+            tokens_in=0,
+            tokens_out=0,
+            latency_ms=0,
+            model="test",
+        )
+        sink, client = _make_sink_with_mock()
+        # Act
+        sink.write(empty_digest, _item_with_meta())
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        summary_text = blocks[3]["text"]["text"]
+        assert summary_text == "*3 行要約*\n"
+
+    def test_key_points_block_empty(self) -> None:
+        # Arrange — key_points が空リストの場合は bullet 行なし (境界値: 0件)
+        empty_digest = Digest(
+            summary='{"summary_lines":["a"],"key_points":[],"type":null,"priority":null}',
+            tokens_in=0,
+            tokens_out=0,
+            latency_ms=0,
+            model="test",
+        )
+        sink, client = _make_sink_with_mock()
+        # Act
+        sink.write(empty_digest, _item_with_meta())
+        # Assert
+        blocks = client.post.call_args.kwargs["json"]["blocks"]
+        kp_text = blocks[4]["text"]["text"]
+        assert kp_text == "*重要ポイント*\n"
 
 
 # ---------- write — 非 2xx 異常系 ----------
