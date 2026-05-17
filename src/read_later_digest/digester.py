@@ -6,8 +6,10 @@ from datetime import UTC, datetime, timedelta, timezone
 from functools import partial
 from typing import Any
 
+from digestkit import FailureInfo
 from digestkit.digester import Digester
-from digestkit.types import Item
+from digestkit.protocols import AckSource
+from digestkit.types import Digest, Item
 
 from read_later_digest.domain.models import ReadLaterRunResult
 from read_later_digest.logging_setup import logger
@@ -32,15 +34,24 @@ class _CachedSource:
     """enrich 済 items を super().run() の Source として使うラッパ.
 
     Digester は run() 中で source.fetch() を呼ぶので、enrich 済 items で差し替える.
-    ack_success / ack_failure など Source の他属性は元 source へ委譲する.
+    ack_success / ack_failure は AckSource プロトコルを満たすために明示メソッドで
+    元 source へ委譲する (Issue #25). ``__getattr__`` 経由の委譲では runtime_checkable
+    Protocol の ``isinstance`` 判定がクラス属性検査で False になり、digestkit 側で
+    ack が呼ばれなくなる.
     """
 
-    def __init__(self, items: list[Item], *, original: Any) -> None:
+    def __init__(self, items: list[Item], *, original: AckSource) -> None:
         self._items = items
         self._original = original
 
     def fetch(self) -> Iterable[Item]:
         yield from self._items
+
+    def ack_success(self, item: Item, digest: Digest) -> None:
+        self._original.ack_success(item, digest)
+
+    def ack_failure(self, failure: FailureInfo) -> None:
+        self._original.ack_failure(failure)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._original, name)
@@ -103,6 +114,10 @@ class ReadLaterDigester(Digester):
             enriched.append(Item(id=it.id, payload=it.payload, metadata=meta))
 
         original_source = self.source
+        assert isinstance(original_source, AckSource), (
+            "ReadLaterDigester requires an AckSource (e.g. NotionDatabaseSource) "
+            "so that Status write-back is preserved across the _CachedSource swap."
+        )
         self.source = _CachedSource(enriched, original=original_source)
         try:
             result = super().run(**kwargs)
