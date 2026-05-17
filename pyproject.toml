@@ -1,6 +1,6 @@
 [project]
 name = "read-later-digest"
-version = "0.3.1"
+version = "0.3.2"
 description = "Notion DB unread articles digest tool"
 requires-python = ">=3.13"
 dependencies = [
