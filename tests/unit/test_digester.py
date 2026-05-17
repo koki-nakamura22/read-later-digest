@@ -60,7 +60,9 @@ def _make_digester(
     max_items_per_run: int = 30,
     clock_fn: Any = None,
 ) -> tuple[ReadLaterDigester, MagicMock, MagicMock, MagicMock]:
-    source = MagicMock()
+    from digestkit.protocols import AckSource
+
+    source = MagicMock(spec=AckSource)
     source.fetch.return_value = items if items is not None else []
     slack_mock = slack or MagicMock()
     notion_mock = notion or MagicMock()
@@ -619,18 +621,45 @@ class TestCachedSource:
         cached = _CachedSource([], original=MagicMock())
         assert list(cached.fetch()) == []
 
-    def test_delegates_unknown_attribute_to_original(self) -> None:
+    def test_ack_success_delegates_to_original(self) -> None:
         # Arrange
         original = MagicMock()
-        original.ack_success.return_value = "delegated"
         cached = _CachedSource([], original=original)
 
         # Act
-        result = cached.ack_success("some-item")
+        cached.ack_success("some-item", "some-digest")
 
         # Assert
-        original.ack_success.assert_called_once_with("some-item")
-        assert result == "delegated"
+        original.ack_success.assert_called_once_with("some-item", "some-digest")
+
+    def test_ack_failure_delegates_to_original(self) -> None:
+        # Arrange
+        original = MagicMock()
+        cached = _CachedSource([], original=original)
+        failure = MagicMock()
+
+        # Act
+        cached.ack_failure(failure)
+
+        # Assert
+        original.ack_failure.assert_called_once_with(failure)
+
+    def test_delegates_unknown_attribute_to_original(self) -> None:
+        # Arrange
+        original = MagicMock()
+        original.some_other_attr = "delegated"
+        cached = _CachedSource([], original=original)
+
+        # Act / Assert
+        assert cached.some_other_attr == "delegated"
+
+    def test_satisfies_acksource_protocol(self) -> None:
+        # Issue #25: __getattr__ では runtime_checkable Protocol の isinstance を
+        # 満たさないため、ack_success / ack_failure は明示メソッドである必要がある.
+        from digestkit.protocols import AckSource
+
+        cached = _CachedSource([], original=MagicMock())
+        assert isinstance(cached, AckSource)
 
     def test_fetch_is_not_delegated_to_original(self) -> None:
         # Arrange: original has a different fetch that should NOT be called
