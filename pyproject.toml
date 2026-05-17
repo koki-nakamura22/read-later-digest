@@ -14,7 +14,7 @@ dependencies = [
     "anthropic>=0.40",
     "pydantic>=2.9",
     "boto3>=1.35",
-    "digestkit",
+    "digestkit>=0.1.0,<0.2",
 ]
 
 [project.optional-dependencies]
@@ -26,9 +26,6 @@ dev = [
     "respx>=0.21",
     "pyright>=1.1",
 ]
-
-[tool.uv.sources]
-digestkit = { path = "src/vendor/digestkit-0.1.0-py3-none-any.whl" }
 
 [build-system]
 requires = ["hatchling"]
