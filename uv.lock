@@ -321,28 +321,24 @@ wheels = [
 [[package]]
 name = "digestkit"
 version = "0.1.0"
-source = { path = "src/vendor/digestkit-0.1.0-py3-none-any.whl" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "digestkit-core" },
     { name = "litellm" },
     { name = "python-dotenv" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/ae/83/6002acee86a9c21a14e7b32ef1050ef79bbfccbe2cecfbd68d528f062d92/digestkit-0.1.0.tar.gz", hash = "sha256:b4cd5c40d3be012cf2614d066e4b4f6e5232b40f4f7ec2d7acb857cf479ced8d", size = 72341 }
 wheels = [
-    { filename = "digestkit-0.1.0-py3-none-any.whl", hash = "sha256:4e34e67733bcf873cac7c771b8c5f68e9bbd36488c556e3b464977b9f91c8242" },
+    { url = "https://files.pythonhosted.org/packages/2d/d2/3cdb51b9b0ef82a96a78d9623f1a2413b1ec659773ccd8ebb420d44d085c/digestkit-0.1.0-py3-none-any.whl", hash = "sha256:2cc1eee58508d94f75028c2b710256cd9c2449ebac66c21bed50b18b42f69b6c", size = 36341 },
 ]
 
-[package.metadata]
-requires-dist = [
-    { name = "httpx", marker = "extra == 'all'", specifier = ">=0.27" },
-    { name = "httpx", marker = "extra == 'slack'", specifier = ">=0.27" },
-    { name = "httpx", marker = "extra == 'web'", specifier = ">=0.27" },
-    { name = "litellm", specifier = ">=1.50,<2" },
-    { name = "notion-client", marker = "extra == 'all'", specifier = ">=2" },
-    { name = "notion-client", marker = "extra == 'notion'", specifier = ">=2" },
-    { name = "pypdf", marker = "extra == 'all'", specifier = ">=4" },
-    { name = "pypdf", marker = "extra == 'pdf'", specifier = ">=4" },
-    { name = "python-dotenv", specifier = ">=1" },
-    { name = "trafilatura", marker = "extra == 'all'", specifier = ">=1.12" },
-    { name = "trafilatura", marker = "extra == 'web'", specifier = ">=1.12" },
+[[package]]
+name = "digestkit-core"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/14/82dbdb2d363b49989cb21d52c6d1d72a5c770626ace755020102d80ebf18/digestkit_core-0.1.0.tar.gz", hash = "sha256:123bc887f759df1712380399e2bddc8a41968b28f336f59e726e0342d1d43bf7", size = 16795 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1d/d3/9f47a94738606775974b0a70269d838938ff57fc5d8e91641a5a74282b5d/digestkit_core-0.1.0-py3-none-any.whl", hash = "sha256:7cb500c9ce3d15760bf8b1820d5a9047e30b2b9569b3d10dc7ed991736384f41", size = 16134 },
 ]
 
 [[package]]
@@ -1430,7 +1426,7 @@ wheels = [
 
 [[package]]
 name = "read-later-digest"
-version = "0.2.1"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
@@ -1458,7 +1454,7 @@ requires-dist = [
     { name = "anthropic", specifier = ">=0.40" },
     { name = "aws-lambda-powertools", specifier = ">=3.0" },
     { name = "boto3", specifier = ">=1.35" },
-    { name = "digestkit", path = "src/vendor/digestkit-0.1.0-py3-none-any.whl" },
+    { name = "digestkit", specifier = ">=0.1.0,<0.2" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
     { name = "notion-client", specifier = ">=3.0,<4.0" },
