@@ -31,6 +31,13 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.uv]
+# certifi is only a transitive dependency, so uv.lock alone pins it. Resolving a uv.lock
+# conflict with an older side would silently bring back a bundle that still trusts
+# emSign ECC Root CA - G3 (eMudhra compromise). With this floor, `uv lock --check` and
+# `uv sync --locked` fail instead.
+constraint-dependencies = ["certifi>=2026.10.19"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/read_later_digest"]
 
